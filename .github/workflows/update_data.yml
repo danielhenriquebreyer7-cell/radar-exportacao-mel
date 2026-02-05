@@ -1,0 +1,37 @@
+name: Autopiloto de Dados
+
+on:
+  schedule:
+    # Roda no dia 5 de cada mês às 00:00 UTC (dados do MDIC costumam sair nos primeiros dias)
+    - cron: '0 0 5 * *'
+  workflow_dispatch: # Permite rodar manualmente pelo botão no GitHub
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Executar Coleta e Processamento (MDIC)
+        run: |
+          python scraper.py
+          python processor.py
+
+      - name: Commit e Push das atualizações
+        run: |
+          git config --global user.name "Data Autopilot"
+          git config --global user.email "autopilot@data.agent"
+          git add mel_export.db
+          git commit -m "Auto-update: Novos dados adicionados em $(date +'%Y-%m-%d')" || exit 0
+          git push
