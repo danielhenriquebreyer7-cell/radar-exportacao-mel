@@ -136,5 +136,51 @@ def process_data():
     else:
         print("Nenhum dado encontrado.")
 
+
+def process_comtrade_data():
+    print("Processando dados globais (Comtrade)...")
+    csv_path = os.path.join(DATA_DIR, "comtrade_global_honey_v2.csv")
+    
+    if not os.path.exists(csv_path):
+        print("Arquivo Comtrade não encontrado. Pulando.")
+        return
+
+    try:
+        df = pd.read_csv(csv_path)
+        
+        # Selecionar colunas relevantes
+        # reporterDesc = País Exportador
+        # primaryValue = Valor USD
+        # netWgt = Peso KG
+        # refYear = Ano
+        
+        cols_map = {
+            'refYear': 'Ano',
+            'reporterDesc': 'Pais_Exportador',
+            'primaryValue': 'Valor_USD',
+            'netWgt': 'Peso_KG'
+        }
+        
+        # Filtrar apenas colunas que existem (segurança)
+        available_cols = [c for c in cols_map.keys() if c in df.columns]
+        df_filtered = df[available_cols].rename(columns=cols_map)
+        
+        # Se netWgt não existir, tentar qty
+        if 'Peso_KG' not in df_filtered.columns and 'qty' in df.columns:
+            df_filtered['Peso_KG'] = df['qty']
+            
+        # Limpeza básica
+        df_filtered['Valor_USD'] = pd.to_numeric(df_filtered['Valor_USD'], errors='coerce').fillna(0)
+        
+        # Salvar no Banco de Dados
+        conn = sqlite3.connect(DB_NAME)
+        df_filtered.to_sql('exportacoes_mundo', conn, if_exists='replace', index=False)
+        conn.close()
+        print(f"Sucesso Global! {len(df_filtered)} registros mundiais atualizados.")
+        
+    except Exception as e:
+        print(f"Erro ao processar Comtrade: {e}")
+
 if __name__ == "__main__":
     process_data()
+    process_comtrade_data()

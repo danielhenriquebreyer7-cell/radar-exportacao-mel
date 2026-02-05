@@ -23,9 +23,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Executar Coleta e Processamento (MDIC)
+      - name: Executar Coleta e Processamento (MDIC + Comtrade)
         run: |
           python scraper.py
+          python fetch_comtrade.py
           python processor.py
 
       - name: Commit e Push das atualizações
