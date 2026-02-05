@@ -1,0 +1,12 @@
+# Dados volumosos
+data/
+metadata/
+
+# Ambientes virtuais e cache
+venv/
+__pycache__/
+*.pyc
+.streamlit/
+
+# Sistema
+.DS_Store
