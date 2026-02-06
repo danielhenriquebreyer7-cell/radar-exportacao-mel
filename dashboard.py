@@ -39,9 +39,19 @@ def load_data():
         df_mensal = pd.read_sql("SELECT * FROM comtrade_mensal", conn)
     except Exception:
         df_mensal = pd.DataFrame()
+        
+    try:
+        df_fao_prod = pd.read_sql("SELECT * FROM fao_production", conn)
+    except Exception:
+        df_fao_prod = pd.DataFrame()
+
+    try:
+        df_fao_price = pd.read_sql("SELECT * FROM fao_prices", conn)
+    except Exception:
+        df_fao_price = pd.DataFrame()
 
     conn.close()
-    return df_br, df_global, df_bilateral, df_mensal
+    return df_br, df_global, df_bilateral, df_mensal, df_fao_prod, df_fao_price
 
 def format_br(val, is_currency=False):
     """Formata números para o padrão brasileiro."""
@@ -51,7 +61,7 @@ def format_br(val, is_currency=False):
     return f"{val:,.0f}".replace(",", ".")
 
 try:
-    df, df_global, df_bilateral, df_mensal = load_data()
+    df, df_global, df_bilateral, df_mensal, df_fao_prod, df_fao_price = load_data()
 except Exception:
     st.error("Banco de dados não encontrado. Por favor, execute o processamento primeiro.")
     st.stop()
@@ -60,7 +70,9 @@ except Exception:
 
 # Navegação Lateral
 st.sidebar.title("Navegação")
-view_mode = st.sidebar.radio("Selecione a Visão:", ["Visão Brasil (Local)", "Visão Global (Mundo)"])
+view_mode = st.sidebar.radio("Selecione a Visão:", 
+    ["Visão Brasil (Local)", "Visão Global (Mundo)", "Inteligência de Produção (FAO)"]
+)
 
 if view_mode == "Visão Brasil (Local)":
     # --- CÓDIGO ORIGINAL DA VISÃO BRASIL ---
@@ -128,7 +140,7 @@ if view_mode == "Visão Brasil (Local)":
 
     # ... (Tabela Detalhada Brasil - Omitindo detalhes para brevidade, mas mantendo funcionalidade se necessário) ...
     
-else:
+elif view_mode == "Visão Global (Mundo)":
     # --- VISÃO GLOBAL (COMTRADE) ---
     st.sidebar.header("Filtros Global")
     if not df_global.empty:
@@ -370,6 +382,102 @@ else:
         
     else:
         st.warning("Dados globais (Comtrade) ainda não disponíveis. Execute a importação primeiro.")
+
+elif view_mode == "Inteligência de Produção (FAO)":
+    st.title("🚜 Inteligência de Produção (FAOSTAT)")
+    st.markdown("**Fonte:** FAO (QCL & Prices) | **Foco:** Produção Mundial e Preços ao Produtor")
+    st.markdown("---")
+
+    if df_fao_prod.empty:
+        st.warning("Dados FAO não carregados / tabela vazia. Execute o processamento.")
+    else:
+        # Sidebar Filters FAO
+        st.sidebar.header("Filtros FAO")
+        # Filtrar anos > 0
+        anos_fao = sorted(df_fao_prod[df_fao_prod['Ano'] > 0]['Ano'].unique(), reverse=True)
+        if not anos_fao:
+             st.error("Sem dados de anos válidos.")
+             st.stop()
+             
+        sel_ano_fao = st.sidebar.selectbox("Selecione o Ano Base", anos_fao)
+
+        # Filter Data
+        prod_ano = df_fao_prod[df_fao_prod['Ano'] == sel_ano_fao]
+        price_ano = df_fao_price[df_fao_price['Ano'] == sel_ano_fao] if not df_fao_price.empty else pd.DataFrame()
+
+        # KPIs
+        total_prod = prod_ano['Producao_Ton'].sum()
+        # Maior produtor
+        max_producer = "-"
+        if not prod_ano.empty:
+            max_prod_row = prod_ano.loc[prod_ano['Producao_Ton'].idxmax()]
+            max_producer = f"{max_prod_row['Pais']}"
+
+        # Layout Métricas
+        c1, c2, c3 = st.columns(3)
+        fmt_ton = lambda x: f"{x:,.0f}".replace(",", ".") + " Ton"
+        
+        c1.metric(f"Produção Global ({sel_ano_fao})", fmt_ton(total_prod))
+        c2.metric("Maior Produtor", max_producer)
+        
+        avg_price_global = 0
+        if not price_ano.empty:
+             avg_price_global = price_ano['Price_USD'].mean()
+        
+        c3.metric("Preço Médio Global (Produtor)", f"US$ {avg_price_global:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+        st.markdown("---")
+
+        # Chart 1: Top Producers
+        st.subheader(f"🏆 Top 15 Maiores Produtores ({sel_ano_fao})")
+        top_prod = prod_ano.sort_values('Producao_Ton', ascending=False).head(15)
+        
+        # Colorir Brasil se estiver
+        top_prod['Color'] = top_prod['Pais'].apply(lambda x: '#009c3b' if 'Brazil' in str(x) else '#1f77b4')
+        
+        fig_prod = px.bar(top_prod, x='Producao_Ton', y='Pais', orientation='h', 
+                          title=f"Produção de Mel (Ton) em {sel_ano_fao}", 
+                          text_auto='.2s',
+                          color='Color', color_discrete_map='identity')
+        
+        fig_prod.update_layout(yaxis={'categoryorder':'total ascending'}, separators=",.", showlegend=False)
+        st.plotly_chart(fig_prod, use_container_width=True)
+
+        # Chart 2: Price vs Prod
+        if not price_ano.empty:
+            st.markdown("---")
+            st.subheader(f"💰 Eficiência de Mercado: Produção vs Preço ao Produtor ({sel_ano_fao})")
+            st.caption("Eixo X (Log): Volume Produzido | Eixo Y: Preço por Tonelada (USD)")
+            
+            # Merge
+            df_merged = pd.merge(prod_ano, price_ano, on=['Pais', 'Ano'], how='inner')
+            
+            if not df_merged.empty:
+                # Filtrar outliers ou preços zerados
+                df_merged = df_merged[df_merged['Price_USD'] > 0]
+                
+                fig_scatter = px.scatter(
+                    df_merged, 
+                    x='Producao_Ton', 
+                    y='Price_USD', 
+                    size='Producao_Ton', 
+                    color='Pais',
+                    hover_name='Pais',
+                    title="Quem produz mais barato/caro? (USD/Ton)",
+                    labels={'Producao_Ton': 'Produção (Ton)', 'Price_USD': 'Preço ao Produtor (USD/Ton)'},
+                    log_x=True
+                )
+                fig_scatter.update_layout(separators=",.")
+                st.plotly_chart(fig_scatter, use_container_width=True)
+                
+                with st.expander("Ver Tabela Detalhada (Preços FAO)"):
+                    st.dataframe(df_merged[['Pais', 'Producao_Ton', 'Price_USD', 'Price_LCU']].sort_values('Producao_Ton', ascending=False).style.format({
+                        'Producao_Ton': "{:,.0f}",
+                        'Price_USD': "${:,.2f}",
+                        'Price_LCU': "{:,.2f}"
+                    }))
+            else:
+                 st.info("Sem dados de preço cruzados para este ano.")
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Desenvolvido por AntiGravity")

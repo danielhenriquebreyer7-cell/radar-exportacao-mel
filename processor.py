@@ -254,6 +254,50 @@ def process_comtrade_data(subscription_key):
             df_mensal_final.to_sql('comtrade_mensal', conn, if_exists='replace', index=False)
             print(f"Sucesso! {len(df_mensal_final)} registros mensais salvos.")
             
+        # --- PROCESSAMENTO FAO (NOVO) ---
+        print("Processando dados FAO...")
+        
+        # 1. Produção
+        fao_prod_file = os.path.join(DATA_DIR, "fao_production_honey.csv")
+        if os.path.exists(fao_prod_file):
+            df_prod = pd.read_csv(fao_prod_file)
+            # Colunas: Area, Year, Value, Unit
+            # Filtrar colunas relevantes
+            df_prod = df_prod[['Area', 'Year', 'Value', 'Unit']].rename(columns={
+                'Area': 'Pais', 'Year': 'Ano', 'Value': 'Producao_Ton'
+            })
+            df_prod['Producao_Ton'] = pd.to_numeric(df_prod['Producao_Ton'], errors='coerce').fillna(0)
+            df_prod.to_sql('fao_production', conn, if_exists='replace', index=False)
+            print(f"Sucesso! {len(df_prod)} registros de produção FAO salvos.")
+            
+        # 2. Preços
+        fao_price_file = os.path.join(DATA_DIR, "fao_prices_honey.csv")
+        if os.path.exists(fao_price_file):
+            df_prices = pd.read_csv(fao_price_file)
+            # Element Code 5530 (LCU), 5532 (USD)
+            # Vamos pivotar para ter colunas separadas
+            # Colunas: Area, Year, Element Code, Value
+            
+            # Mapear Element Code para nome legível
+            # 5530 -> Price_LCU, 5532 -> Price_USD
+            elem_map = {5530: 'Price_LCU', 5532: 'Price_USD'}
+            df_prices['Type'] = df_prices['Element Code'].map(elem_map)
+            
+            # Pivot
+            df_pivoted = df_prices.pivot_table(
+                index=['Area', 'Year'], 
+                columns='Type', 
+                values='Value', 
+                aggfunc='first'
+            ).reset_index()
+            
+            # Renomear
+            df_pivoted = df_pivoted.rename(columns={'Area': 'Pais', 'Year': 'Ano'})
+            
+            # Salvar
+            df_pivoted.to_sql('fao_prices', conn, if_exists='replace', index=False)
+            print(f"Sucesso! {len(df_pivoted)} registros de preços FAO salvos.")
+
         conn.close()
 
     else:
