@@ -106,6 +106,7 @@ if view_mode == "Visão Brasil (Local)":
         evolucao = df_filtered.groupby(['Ano', 'Mes', 'Mes_Num'])['Peso_KG'].sum().reset_index()
         evolucao = evolucao.sort_values(['Ano', 'Mes_Num'])
         fig_evolucao = px.line(evolucao, x='Mes', y='Peso_KG', color='Ano', markers=True)
+        fig_evolucao.update_layout(separators=",.")
         st.plotly_chart(fig_evolucao, use_container_width=True)
     
     row1_col1, row1_col2 = st.columns(2)
@@ -114,7 +115,7 @@ if view_mode == "Visão Brasil (Local)":
         if not df_filtered.empty:
             destinos = df_filtered.groupby('Pais')['Valor_USD'].sum().reset_index().sort_values('Valor_USD', ascending=False).head(10)
             fig_destinos = px.bar(destinos, x='Valor_USD', y='Pais', orientation='h', color='Valor_USD')
-            fig_destinos.update_layout(yaxis={'categoryorder':'total ascending'})
+            fig_destinos.update_layout(yaxis={'categoryorder':'total ascending'}, separators=",.")
             st.plotly_chart(fig_destinos, use_container_width=True)
             
     with row1_col2:
@@ -122,7 +123,7 @@ if view_mode == "Visão Brasil (Local)":
         if not df_filtered.empty:
             muns = df_filtered.groupby('Municipio')['Peso_KG'].sum().reset_index().sort_values('Peso_KG', ascending=False).head(10)
             fig_muns = px.bar(muns, x='Peso_KG', y='Municipio', orientation='h', color='Peso_KG')
-            fig_muns.update_layout(yaxis={'categoryorder':'total ascending'})
+            fig_muns.update_layout(yaxis={'categoryorder':'total ascending'}, separators=",.")
             st.plotly_chart(fig_muns, use_container_width=True)
 
     # ... (Tabela Detalhada Brasil - Omitindo detalhes para brevidade, mas mantendo funcionalidade se necessário) ...
@@ -193,7 +194,7 @@ else:
                     )
                 )])
                 
-                fig_sankey.update_layout(title_text=f"Top {len(top_flows)} Maiores Fluxos Comerciais (USD)", font_size=12, height=600)
+                fig_sankey.update_layout(title_text=f"Top {len(top_flows)} Maiores Fluxos Comerciais (USD)", font_size=12, height=600, separators=",.")
                 st.plotly_chart(fig_sankey, use_container_width=True)
                 
                 with st.expander("Ver Detalhes dos Fluxos"):
@@ -243,7 +244,7 @@ else:
                     color_discrete_map={'Export': '#1f77b4', 'Import': '#ff7f0e'}
                 )
                 # Formatar Eixo Y BR
-                fig_saz.update_layout(yaxis_tickformat=",.2f") 
+                fig_saz.update_layout(yaxis_tickformat=",.2f", separators=",.") 
                 st.plotly_chart(fig_saz, use_container_width=True)
             else:
                 st.info("Sem dados mensais para os filtros selecionados.")
@@ -298,7 +299,8 @@ else:
             fig_exp.update_layout(
                 yaxis={'categoryorder':'total ascending'}, 
                 showlegend=False,
-                xaxis_title="Valor Exportado (USD)"
+                xaxis_title="Valor Exportado (USD)",
+                separators=",."
             )
             st.plotly_chart(fig_exp, use_container_width=True)
             
@@ -351,7 +353,8 @@ else:
             )
             fig_imp.update_layout(
                 yaxis={'categoryorder':'total ascending'},
-                xaxis_title="Valor Importado (USD)"
+                xaxis_title="Valor Importado (USD)",
+                separators=",."
             )
             st.plotly_chart(fig_imp, use_container_width=True)
 
