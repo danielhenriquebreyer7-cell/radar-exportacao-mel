@@ -257,29 +257,54 @@ def process_comtrade_data(subscription_key):
         # --- PROCESSAMENTO FAO (NOVO) ---
         print("Processando dados FAO...")
         
-        # 1. Produção
+        # 1. Produção e Colmeias
         fao_prod_file = os.path.join(DATA_DIR, "fao_production_honey.csv")
         if os.path.exists(fao_prod_file):
             df_prod = pd.read_csv(fao_prod_file)
-            # Colunas: Area, Year, Value, Unit
-            # Filtrar colunas relevantes
-            df_prod = df_prod[['Area', 'Year', 'Value', 'Unit']].rename(columns={
-                'Area': 'Pais', 'Year': 'Ano', 'Value': 'Producao_Ton'
-            })
-            df_prod['Producao_Ton'] = pd.to_numeric(df_prod['Producao_Ton'], errors='coerce').fillna(0)
-            df_prod.to_sql('fao_production', conn, if_exists='replace', index=False)
-            print(f"Sucesso! {len(df_prod)} registros de produção FAO salvos.")
+            # Colunas: Area Code, Area, Element Code, Year, Value
+            
+            # 1. Filtro de Agregados Regionais (Area Code < 5000)
+            df_prod = df_prod[df_prod['Area Code'] < 5000]
+            
+            # 2. Pivotar para unir Production e Stocks
+            # Mapear Element Code: 5510 -> Producao_Ton, 5111 -> Colmeias
+            elem_map = {5510: 'Producao_Ton', 5111: 'Colmeias'}
+            df_prod['Type'] = df_prod['Element Code'].map(elem_map)
+            df_prod = df_prod.dropna(subset=['Type'])
+            
+            df_pivoted_prod = df_prod.pivot_table(
+                index=['Area', 'Year'], 
+                columns='Type', 
+                values='Value', 
+                aggfunc='first'
+            ).reset_index()
+            
+            # Garantir colunas
+            if 'Producao_Ton' not in df_pivoted_prod.columns: df_pivoted_prod['Producao_Ton'] = 0
+            if 'Colmeias' not in df_pivoted_prod.columns: df_pivoted_prod['Colmeias'] = 0
+            
+            # 3. Calcular Yield (Kg/Colmeia)
+            # Yield = (Ton * 1000) / Colmeias
+            df_pivoted_prod['Yield_Hg'] = 0 # Placeholder se quisesse Hg (padrão FAO), mas vamos usar Kg
+            df_pivoted_prod['Yield_Kg_Colmeia'] = df_pivoted_prod.apply(
+                lambda row: (row['Producao_Ton'] * 1000) / row['Colmeias'] if row['Colmeias'] > 0 else 0, axis=1
+            )
+
+            # Renomear para banco
+            df_pivoted_prod = df_pivoted_prod.rename(columns={'Area': 'Pais', 'Year': 'Ano'})
+            
+            df_pivoted_prod.to_sql('fao_production', conn, if_exists='replace', index=False)
+            print(f"Sucesso! {len(df_pivoted_prod)} registros de produção/colmeias FAO salvos.")
             
         # 2. Preços
         fao_price_file = os.path.join(DATA_DIR, "fao_prices_honey.csv")
         if os.path.exists(fao_price_file):
             df_prices = pd.read_csv(fao_price_file)
-            # Element Code 5530 (LCU), 5532 (USD)
-            # Vamos pivotar para ter colunas separadas
-            # Colunas: Area, Year, Element Code, Value
             
-            # Mapear Element Code para nome legível
-            # 5530 -> Price_LCU, 5532 -> Price_USD
+            # Filtro de Agregados
+            df_prices = df_prices[df_prices['Area Code'] < 5000]
+            
+            # Element Code 5530 (LCU), 5532 (USD)
             elem_map = {5530: 'Price_LCU', 5532: 'Price_USD'}
             df_prices['Type'] = df_prices['Element Code'].map(elem_map)
             

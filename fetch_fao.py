@@ -68,15 +68,25 @@ def process_zip(zip_path, name, item_code, elements, debug=False):
                 # Vamos verificar se 'Item Code' existe
                 target_df = chunk.copy()
                 
-                # Filtro principal
-                mask = (target_df['Item Code'] == item_code) & (target_df['Element Code'].isin(elements))
+                # Definir máscaras de interesse com base no tipo de arquivo
+                if name == "production":
+                    # 1. Mel (1182) -> Produção (5510)
+                    mask_honey = (target_df['Item Code'] == 1182) & (target_df['Element Code'] == 5510)
+                    # 2. Colmeias (1181) -> Stocks (5111)
+                    mask_hives = (target_df['Item Code'] == 1181) & (target_df['Element Code'] == 5111)
+                    mask = mask_honey | mask_hives
+                else:
+                    # Preços (Item 1182, Elementos passados)
+                    mask = (target_df['Item Code'] == item_code) & (target_df['Element Code'].isin(elements))
+                
                 filtered = target_df[mask]
                 
                 if not filtered.empty:
                     chunks.append(filtered)
                     if not found_honey:
-                         print(f"[{name}] DADOS ENCONTRADOS! Exemplo:")
-                         print(filtered.iloc[0])
+                         # Debug info
+                         print(f"[{name}] DADOS ENCONTRADOS! Amostra:")
+                         print(filtered[['Item', 'Element', 'Year', 'Value']].head(2))
                          found_honey = True
         
         if chunks:
