@@ -2,6 +2,7 @@ import pandas as pd
 import sqlite3
 import os
 import glob
+import comtradeapicall
 
 # Configurações
 DATA_DIR = "data"
@@ -9,7 +10,7 @@ METADATA_DIR = "metadata"
 DB_NAME = "mel_export.db"
 SH4_CODE = 409  # Mel natural
 
-# Mapeamento SISCOMEX completo (Extraído de fontes oficiais/Fazcomex)
+# Mapeamento SISCOMEX completo
 COUNTRY_MAPPING = {
     13: 'Afeganistão', 17: 'Albânia', 23: 'Alemanhã', 31: 'Burkina Faso', 37: 'Andorra',
     40: 'Angola', 41: 'Anguilla', 43: 'Antígua e Barbuda', 53: 'Arábia Saudita', 59: 'Argélia',
@@ -87,8 +88,7 @@ def process_data():
         df = read_csv_robust(file)
         if df is None: continue
         
-        # Correção específica para MDIC: Alguns arquivos usam 34 como prefixo para SP
-        # Vamos tratar como string para manipulação e depois converter
+        # Correção específica para MDIC
         df['CO_MUN_STR'] = df['CO_MUN'].astype(str).str.replace('.0', '', regex=False)
         df.loc[df['CO_MUN_STR'].str.startswith('34'), 'CO_MUN_STR'] = '35' + df['CO_MUN_STR'].str[2:]
         df['CO_MUN_FIX'] = pd.to_numeric(df['CO_MUN_STR'], errors='coerce')
@@ -99,16 +99,10 @@ def process_data():
         df_filtered = df[df['SH4'] == SH4_CODE].copy()
         
         if not df_filtered.empty:
-            # Mapear Municípios via IBGE usando o código corrigido
             df_filtered = df_filtered.merge(df_ibge, left_on='CO_MUN_FIX', right_on='CO_MUN', how='left')
-            
-            # Mapear Países via Dicionário Local
             df_filtered['Pais'] = df_filtered['CO_PAIS'].map(COUNTRY_MAPPING).fillna(df_filtered['CO_PAIS'].astype(str))
-            
-            # Mes Nome
             df_filtered['Mes_Nome'] = df_filtered['CO_MES'].map(MONTH_MAPPING)
 
-            # Fallback para nomes de cidades se o join falhar
             df_filtered['Municipio'] = df_filtered['NO_MUN'].fillna(df_filtered['CO_MUN_FIX'].astype(str))
             df_filtered['UF'] = df_filtered['SG_UF'].fillna(df_filtered['SG_UF_MUN'])
 
@@ -136,51 +130,136 @@ def process_data():
     else:
         print("Nenhum dado encontrado.")
 
-
-def process_comtrade_data():
-    print("Processando dados globais (Comtrade)...")
-    csv_path = os.path.join(DATA_DIR, "comtrade_global_honey_v2.csv")
-    
-    if not os.path.exists(csv_path):
-        print("Arquivo Comtrade não encontrado. Pulando.")
-        return
-
+def get_comtrade_country_map(subscription_key):
+    """Obtém mapa de códigos de países da Comtrade."""
+    print("Obtendo metadados de países (Reporters)...")
     try:
-        df = pd.read_csv(csv_path)
+        df_refs = comtradeapicall.getReference(category='reporter')
         
-        # Selecionar colunas relevantes
-        # reporterDesc = País Exportador
-        # primaryValue = Valor USD
-        # netWgt = Peso KG
-        # refYear = Ano
+        if df_refs is not None and not df_refs.empty:
+             # id -> text mapping
+             return dict(zip(df_refs['id'], df_refs['text']))
+    except Exception as e:
+        print(f"Erro ao obter metadados: {e}")
+    return {}
+
+def process_comtrade_data(subscription_key):
+    print("\nProcessando dados globais (Comtrade)...")
+    
+    files_to_process = [
+        ("comtrade_global_honey_full.csv", "Export"),
+        ("comtrade_global_honey_imports.csv", "Import")
+    ]
+    
+    all_data = []
+    country_map = None # Cache for metadata
+
+    for filename, flow_type in files_to_process:
+        source_file = os.path.join(DATA_DIR, filename)
+        if not os.path.exists(source_file):
+            print(f"Arquivo {filename} não encontrado. Pulando.")
+            continue
+            
+        print(f"Lendo {filename}...")
+        df = pd.read_csv(source_file)
         
+        # Mapear Países se reporterDesc estiver vazio ou numérico
+        if 'reporterDesc' not in df.columns or df['reporterDesc'].isna().all() or (df['reporterDesc'] == '').all() or df['reporterDesc'].dtype != object:
+            if country_map is None:
+                print("Buscando metadados de países...")
+                country_map = get_comtrade_country_map(subscription_key)
+            
+            df['reporterCode'] = pd.to_numeric(df['reporterCode'], errors='coerce')
+            df['reporterDesc'] = df['reporterCode'].map(country_map)
+            
+        # Garantir que temos a coluna de fluxo
+        df['Tipo'] = flow_type
+        
+        # Seleção de colunas
         cols_map = {
-            'refYear': 'Ano',
-            'reporterDesc': 'Pais_Exportador',
+            'period': 'Ano',
+            'reporterDesc': 'Pais',
+            'cmdCode': 'HS_Code',
             'primaryValue': 'Valor_USD',
-            'netWgt': 'Peso_KG'
+            'netWgt': 'Peso_KG',
+            'Tipo': 'Tipo'
         }
         
-        # Filtrar apenas colunas que existem (segurança)
-        available_cols = [c for c in cols_map.keys() if c in df.columns]
-        df_filtered = df[available_cols].rename(columns=cols_map)
+        # Verificar quais colunas existem no DF original (segurança)
+        available_cols = [c for c in cols_map.keys() if c in df.columns or c == 'Tipo']
+        df_final = df[available_cols].rename(columns=cols_map)
         
-        # Se netWgt não existir, tentar qty
-        if 'Peso_KG' not in df_filtered.columns and 'qty' in df.columns:
-            df_filtered['Peso_KG'] = df['qty']
-            
-        # Limpeza básica
-        df_filtered['Valor_USD'] = pd.to_numeric(df_filtered['Valor_USD'], errors='coerce').fillna(0)
+        all_data.append(df_final)
+
+    if all_data:
+        combined_df = pd.concat(all_data, ignore_index=True)
+        combined_df['Ano'] = pd.to_numeric(combined_df['Ano'], errors='coerce')
+        combined_df['Valor_USD'] = pd.to_numeric(combined_df['Valor_USD'], errors='coerce').fillna(0)
+        combined_df['Peso_KG'] = pd.to_numeric(combined_df['Peso_KG'], errors='coerce').fillna(0)
         
-        # Salvar no Banco de Dados
         conn = sqlite3.connect(DB_NAME)
-        df_filtered.to_sql('exportacoes_mundo', conn, if_exists='replace', index=False)
-        conn.close()
-        print(f"Sucesso Global! {len(df_filtered)} registros mundiais atualizados.")
+        combined_df.to_sql('comtrade_data', conn, if_exists='replace', index=False)
+        print(f"Sucesso! {len(combined_df)} registros globais (Exp+Imp) processados.")
         
-    except Exception as e:
-        print(f"Erro ao processar Comtrade: {e}")
+        # --- PROCESSAMENTO BILATERAL ---
+        bilateral_file = os.path.join(DATA_DIR, "comtrade_bilateral_raw.csv")
+        if os.path.exists(bilateral_file):
+            print("Processando dados bilaterais...")
+            df_bil = pd.read_csv(bilateral_file)
+            
+            # Garantir mappings
+            if 'reporterDesc' not in df_bil.columns or df_bil['reporterDesc'].isna().any():
+                if country_map is None: country_map = get_comtrade_country_map(subscription_key)
+                df_bil['reporterDesc'] = df_bil['reporterCode'].map(country_map).fillna(df_bil['reporterDesc'])
+            
+            # Partner pode não ter desc, vamos tentar mapear também
+            if 'partnerDesc' not in df_bil.columns or df_bil['partnerDesc'].isna().any():
+                 if country_map is None: country_map = get_comtrade_country_map(subscription_key)
+                 df_bil['partnerDesc'] = df_bil['partnerCode'].map(country_map).fillna(df_bil['partnerDesc'])
+
+            # Selecionar colunas
+            df_bil_final = df_bil[['period', 'reporterDesc', 'partnerDesc', 'primaryValue', 'netWgt']].copy()
+            df_bil_final.columns = ['Ano', 'Origem', 'Destino', 'Valor_USD', 'Peso_KG']
+            
+            df_bil_final['Valor_USD'] = pd.to_numeric(df_bil_final['Valor_USD'], errors='coerce').fillna(0)
+            df_bil_final['Peso_KG'] = pd.to_numeric(df_bil_final['Peso_KG'], errors='coerce').fillna(0)
+            
+            # Salvar tabela separada
+            df_bil_final.to_sql('comtrade_bilateral', conn, if_exists='replace', index=False)
+            print(f"Sucesso! {len(df_bil_final)} fluxos bilaterais salvos.")
+            
+        # --- PROCESSAMENTO MENSAL (SAZONALIDADE) ---
+        monthly_file = os.path.join(DATA_DIR, "comtrade_monthly_raw.csv")
+        if os.path.exists(monthly_file):
+            print("Processando dados mensais...")
+            df_monthly = pd.read_csv(monthly_file)
+            
+            # Garantir mappings
+            if 'reporterDesc' not in df_monthly.columns or df_monthly['reporterDesc'].isna().any():
+                if country_map is None: country_map = get_comtrade_country_map(subscription_key)
+                df_monthly['reporterDesc'] = df_monthly['reporterCode'].map(country_map).fillna(df_monthly['reporterDesc'])
+            
+            # Selecionar colunas
+            # period mensal vem como 202301 (int). Vamos quebrar.
+            df_monthly['period'] = df_monthly['period'].astype(str)
+            df_monthly['Ano'] = df_monthly['period'].str[:4].astype(int)
+            df_monthly['Mes'] = df_monthly['period'].str[4:].astype(int)
+            
+            df_mensal_final = df_monthly[['Ano', 'Mes', 'reporterDesc', 'Tipo', 'primaryValue', 'netWgt']].copy()
+            df_mensal_final.columns = ['Ano', 'Mes', 'Pais', 'Tipo', 'Valor_USD', 'Peso_KG']
+            
+            df_mensal_final['Valor_USD'] = pd.to_numeric(df_mensal_final['Valor_USD'], errors='coerce').fillna(0)
+            df_mensal_final['Peso_KG'] = pd.to_numeric(df_mensal_final['Peso_KG'], errors='coerce').fillna(0)
+            
+            df_mensal_final.to_sql('comtrade_mensal', conn, if_exists='replace', index=False)
+            print(f"Sucesso! {len(df_mensal_final)} registros mensais salvos.")
+            
+        conn.close()
+
+    else:
+        print("Nenhum dado global processado.")
 
 if __name__ == "__main__":
     process_data()
-    process_comtrade_data()
+    SUBSCRIPTION_KEY = "6383e7fcf14b4f48a842339b9a6fe4f6" 
+    process_comtrade_data(SUBSCRIPTION_KEY)
