@@ -254,74 +254,93 @@ def process_comtrade_data(subscription_key):
             df_mensal_final.to_sql('comtrade_mensal', conn, if_exists='replace', index=False)
             print(f"Sucesso! {len(df_mensal_final)} registros mensais salvos.")
             
-        # --- PROCESSAMENTO FAO (NOVO) ---
-        print("Processando dados FAO...")
+        # --- PROCESSAMENTO FAO v2 (Reconstruído) ---
+        print("Processando dados FAO (v2)...")
+        
+        # Parâmetros
+        YEARS_TO_KEEP = 3  # Últimos 3 anos
         
         # 1. Produção e Colmeias
-        fao_prod_file = os.path.join(DATA_DIR, "fao_production_honey.csv")
+        fao_prod_file = os.path.join(DATA_DIR, "fao_production_raw.csv")
         if os.path.exists(fao_prod_file):
             df_prod = pd.read_csv(fao_prod_file)
-            # Colunas: Area Code, Area, Element Code, Year, Value
             
-            # 1. Filtro de Agregados Regionais (Area Code < 5000)
-            df_prod = df_prod[df_prod['Area Code'] < 5000]
+            # Filtrar países (Area Code < 5000 exclui agregados regionais)
+            df_prod = df_prod[df_prod['Area Code'] < 5000].copy()
             
-            # 2. Pivotar para unir Production e Stocks
-            # Mapear Element Code: 5510 -> Producao_Ton, 5114 -> Colmeias
-            elem_map = {5510: 'Producao_Ton', 5114: 'Colmeias'}
-            df_prod['Type'] = df_prod['Element Code'].map(elem_map)
-            df_prod = df_prod.dropna(subset=['Type'])
+            # Determinar últimos 3 anos disponíveis
+            max_year = df_prod['Year'].max()
+            min_year = max_year - YEARS_TO_KEEP + 1
+            df_prod = df_prod[df_prod['Year'] >= min_year]
+            print(f"  Período: {min_year} - {max_year}")
             
-            df_pivoted_prod = df_prod.pivot_table(
-                index=['Area', 'Year'], 
-                columns='Type', 
-                values='Value', 
+            # Mapear elementos: 5510 = Produção, 5114 = Colmeias
+            elem_map = {5510: 'Producao_Kg', 5114: 'Colmeias'}
+            df_prod['Tipo'] = df_prod['Element Code'].map(elem_map)
+            df_prod = df_prod.dropna(subset=['Tipo'])
+            
+            # Converter Produção de Ton para Kg
+            df_prod.loc[df_prod['Tipo'] == 'Producao_Kg', 'Value'] = df_prod.loc[df_prod['Tipo'] == 'Producao_Kg', 'Value'] * 1000
+            
+            # Pivotar para ter Produção e Colmeias lado a lado
+            df_pivot = df_prod.pivot_table(
+                index=['Area', 'Year'],
+                columns='Tipo',
+                values='Value',
                 aggfunc='first'
             ).reset_index()
             
-            # Garantir colunas
-            if 'Producao_Ton' not in df_pivoted_prod.columns: df_pivoted_prod['Producao_Ton'] = 0
-            if 'Colmeias' not in df_pivoted_prod.columns: df_pivoted_prod['Colmeias'] = 0
+            # Garantir colunas existem
+            for col in ['Producao_Kg', 'Colmeias']:
+                if col not in df_pivot.columns:
+                    df_pivot[col] = 0
             
-            # 3. Calcular Yield (Kg/Colmeia)
-            # Yield = (Ton * 1000) / Colmeias
-            df_pivoted_prod['Yield_Hg'] = 0 # Placeholder se quisesse Hg (padrão FAO), mas vamos usar Kg
-            df_pivoted_prod['Yield_Kg_Colmeia'] = df_pivoted_prod.apply(
-                lambda row: (row['Producao_Ton'] * 1000) / row['Colmeias'] if row['Colmeias'] > 0 else 0, axis=1
+            # Converter NaN para 0
+            df_pivot['Producao_Kg'] = df_pivot['Producao_Kg'].fillna(0)
+            df_pivot['Colmeias'] = df_pivot['Colmeias'].fillna(0)
+            
+            # Calcular Produtividade (Kg/colmeia)
+            df_pivot['Produtividade_Kg'] = df_pivot.apply(
+                lambda r: r['Producao_Kg'] / r['Colmeias'] if r['Colmeias'] > 0 else 0, axis=1
             )
-
-            # Renomear para banco
-            df_pivoted_prod = df_pivoted_prod.rename(columns={'Area': 'Pais', 'Year': 'Ano'})
             
-            df_pivoted_prod.to_sql('fao_production', conn, if_exists='replace', index=False)
-            print(f"Sucesso! {len(df_pivoted_prod)} registros de produção/colmeias FAO salvos.")
+            # Renomear colunas
+            df_pivot = df_pivot.rename(columns={'Area': 'Pais', 'Year': 'Ano'})
             
-        # 2. Preços
-        fao_price_file = os.path.join(DATA_DIR, "fao_prices_honey.csv")
+            # Salvar
+            df_pivot.to_sql('fao_production', conn, if_exists='replace', index=False)
+            print(f"  [OK] {len(df_pivot)} registros de produção FAO salvos.")
+        else:
+            print("  [AVISO] Arquivo fao_production_raw.csv não encontrado.")
+        
+        # 2. Preços ao Produtor
+        fao_price_file = os.path.join(DATA_DIR, "fao_prices_raw.csv")
         if os.path.exists(fao_price_file):
             df_prices = pd.read_csv(fao_price_file)
             
-            # Filtro de Agregados
-            df_prices = df_prices[df_prices['Area Code'] < 5000]
+            # Filtrar países
+            df_prices = df_prices[df_prices['Area Code'] < 5000].copy()
             
-            # Element Code 5530 (LCU), 5532 (USD)
-            elem_map = {5530: 'Price_LCU', 5532: 'Price_USD'}
-            df_prices['Type'] = df_prices['Element Code'].map(elem_map)
+            # Filtrar últimos 3 anos
+            max_year = df_prices['Year'].max()
+            min_year = max_year - YEARS_TO_KEEP + 1
+            df_prices = df_prices[df_prices['Year'] >= min_year]
             
-            # Pivot
-            df_pivoted = df_prices.pivot_table(
-                index=['Area', 'Year'], 
-                columns='Type', 
-                values='Value', 
-                aggfunc='first'
-            ).reset_index()
+            # Preço já vem em USD/Ton (Element 5532), converter para USD/Kg
+            df_prices['Preco_USD_Kg'] = df_prices['Value'] / 1000
             
-            # Renomear
-            df_pivoted = df_pivoted.rename(columns={'Area': 'Pais', 'Year': 'Ano'})
+            # Selecionar colunas relevantes
+            df_prices = df_prices[['Area', 'Year', 'Value', 'Preco_USD_Kg']].rename(columns={
+                'Area': 'Pais',
+                'Year': 'Ano',
+                'Value': 'Preco_USD_Ton'
+            })
             
             # Salvar
-            df_pivoted.to_sql('fao_prices', conn, if_exists='replace', index=False)
-            print(f"Sucesso! {len(df_pivoted)} registros de preços FAO salvos.")
+            df_prices.to_sql('fao_prices', conn, if_exists='replace', index=False)
+            print(f"  [OK] {len(df_prices)} registros de preços FAO salvos.")
+        else:
+            print("  [AVISO] Arquivo fao_prices_raw.csv não encontrado.")
 
         conn.close()
 

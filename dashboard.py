@@ -384,121 +384,191 @@ elif view_mode == "Visão Global (Mundo)":
         st.warning("Dados globais (Comtrade) ainda não disponíveis. Execute a importação primeiro.")
 
 elif view_mode == "Inteligência de Produção (FAO)":
-    st.title("🚜 Inteligência de Produção (FAOSTAT)")
-    st.markdown("**Fonte:** FAO (QCL & Prices) | **Foco:** Produção Mundial e Preços ao Produtor")
+    st.title("🌍 Produção Global de Mel (FAOSTAT)")
+    st.markdown("**Fonte:** FAO | **Dados:** Produção, Colmeias, Preços ao Produtor | **Período:** Últimos 3 anos")
     st.markdown("---")
 
     if df_fao_prod.empty:
-        st.warning("Dados FAO não carregados / tabela vazia. Execute o processamento.")
+        st.warning("Dados FAO não disponíveis. Execute o processamento primeiro.")
     else:
-        # Sidebar Filters FAO
+        # Funções de formatação BR
+        fmt_kg = lambda x: f"{x:,.0f}".replace(",", ".") + " kg"
+        fmt_num = lambda x: f"{x:,.0f}".replace(",", ".")
+        fmt_dec = lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        fmt_usd = lambda x: f"US$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        
+        # Sidebar: Filtro de Ano
         st.sidebar.header("Filtros FAO")
-        # Filtrar anos > 0
-        anos_fao = sorted(df_fao_prod[df_fao_prod['Ano'] > 0]['Ano'].unique(), reverse=True)
-        if not anos_fao:
-             st.error("Sem dados de anos válidos.")
-             st.stop()
-             
-        sel_ano_fao = st.sidebar.selectbox("Selecione o Ano Base", anos_fao)
-
-        prod_ano = df_fao_prod[df_fao_prod['Ano'] == sel_ano_fao]
-        price_ano = df_fao_price[df_fao_price['Ano'] == sel_ano_fao] if not df_fao_price.empty else pd.DataFrame()
-
-        # KPIs
-        total_prod = prod_ano['Producao_Ton'].sum()
+        anos_disp = sorted(df_fao_prod['Ano'].dropna().unique(), reverse=True)
+        sel_ano = st.sidebar.selectbox("Ano de Referência", anos_disp, index=0)
+        
+        # Filtrar dados pelo ano selecionado
+        prod_ano = df_fao_prod[df_fao_prod['Ano'] == sel_ano].copy()
+        price_ano = df_fao_price[df_fao_price['Ano'] == sel_ano].copy() if not df_fao_price.empty else pd.DataFrame()
+        
+        # ===== MÉTRICAS GLOBAIS =====
+        total_prod_kg = prod_ano['Producao_Kg'].sum()
         total_colmeias = prod_ano['Colmeias'].sum()
+        produtividade_global = total_prod_kg / total_colmeias if total_colmeias > 0 else 0
+        preco_medio_kg = price_ano['Preco_USD_Kg'].mean() if not price_ano.empty else 0
         
-        # Calcular produtividade global ponderada?? Ou média simples dos países?
-        # Média simples dos países pode ser enganosa. Vamos usar Global Yield = Total Prod / Total Colmeias
-        avg_yield_global = (total_prod * 1000) / total_colmeias if total_colmeias > 0 else 0
-
-        # Maior produtor
-        max_producer = "-"
-        if not prod_ano.empty:
-            max_prod_row = prod_ano.loc[prod_ano['Producao_Ton'].idxmax()]
-            max_producer = f"{max_prod_row['Pais']}"
-
-        # Layout Métricas
         c1, c2, c3, c4 = st.columns(4)
-        fmt_br = lambda x: f"{x:,.0f}".replace(",", ".")
-        fmt_br_dec = lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        c1.metric(f"Produção Global ({sel_ano})", fmt_kg(total_prod_kg))
+        c2.metric("Colmeias (Estoque)", fmt_num(total_colmeias))
+        c3.metric("Produtividade Média", f"{fmt_dec(produtividade_global)} kg/colmeia")
+        c4.metric("Preço Médio", f"US$ {fmt_dec(preco_medio_kg)}/kg")
         
-        c1.metric(f"Produção ({sel_ano_fao})", f"{fmt_br(total_prod)} Ton")
-        c2.metric("Colmeias (Estoque)", f"{fmt_br(total_colmeias)}")
-        c3.metric("Produtividade Média", f"{fmt_br_dec(avg_yield_global)} kg/colmeia")
-        
-        avg_price_global = 0
-        if not price_ano.empty:
-             avg_price_global = price_ano['Price_USD'].mean()
-        
-        c4.metric("Preço Médio (USD)", f"$ {fmt_br_dec(avg_price_global)}")
-
         st.markdown("---")
-
-        # Chart 1: Top Producers
-        c_chart1, c_chart2 = st.columns(2)
         
-        with c_chart1:
-            st.subheader(f"🏆 Top 15 Produtores (Ton)")
-            top_prod = prod_ano.sort_values('Producao_Ton', ascending=False).head(15)
-            top_prod['Color'] = top_prod['Pais'].apply(lambda x: '#009c3b' if 'Brazil' in str(x) else '#1f77b4')
+        # ===== TOP 15 PRODUTORES + CARD BRASIL =====
+        col_chart, col_brasil = st.columns([2, 1])
+        
+        with col_chart:
+            st.subheader("🏆 Top 15 Maiores Produtores")
+            top15 = prod_ano.nlargest(15, 'Producao_Kg').copy()
+            top15['Cor'] = top15['Pais'].apply(lambda x: '#009c3b' if 'Brazil' in str(x) else '#1f77b4')
             
-            fig_prod = px.bar(top_prod, x='Producao_Ton', y='Pais', orientation='h', 
-                              text_auto='.2s', color='Color', color_discrete_map='identity')
-            fig_prod.update_layout(yaxis={'categoryorder':'total ascending'}, separators=",.", showlegend=False)
-            st.plotly_chart(fig_prod, use_container_width=True)
-
-        with c_chart2:
-            st.subheader(f"🐝 Top 10 Produtividade (kg/colmeia)")
-            # Filtrar quem tem produção e colmeias mínimas para evitar outliers de micro-estados
-            df_yield = prod_ano[(prod_ano['Producao_Ton'] > 500) & (prod_ano['Colmeias'] > 1000)].copy()
-            top_yield = df_yield.sort_values('Yield_Kg_Colmeia', ascending=False).head(10)
+            fig_top15 = px.bar(
+                top15, 
+                x='Producao_Kg', 
+                y='Pais', 
+                orientation='h',
+                text=top15['Producao_Kg'].apply(lambda x: f"{x/1e6:.1f}M kg"),
+                color='Cor',
+                color_discrete_map='identity'
+            )
+            fig_top15.update_layout(
+                yaxis={'categoryorder': 'total ascending'},
+                separators=",.",
+                showlegend=False,
+                xaxis_title="Produção (kg)",
+                yaxis_title=""
+            )
+            fig_top15.update_traces(textposition='outside')
+            st.plotly_chart(fig_top15, use_container_width=True)
+        
+        with col_brasil:
+            st.subheader("🇧🇷 Posição do Brasil")
             
-            fig_yield = px.bar(top_yield, x='Yield_Kg_Colmeia', y='Pais', orientation='h',
-                               text_auto='.1f', color_discrete_sequence=['#ff7f0e'])
-            fig_yield.update_layout(yaxis={'categoryorder':'total ascending'}, separators=",.", xaxis_title="kg por colmeia")
-            st.plotly_chart(fig_yield, use_container_width=True)
-
-        # Chart 2: Price vs Prod
-        if not price_ano.empty:
-            st.markdown("---")
-            st.subheader(f"💰 Eficiência: Volume vs Preço ({sel_ano_fao})")
-            st.caption("Tamanho da bolha = Quantidade de Colmeias | Cor = Produtividade")
+            # Calcular ranking do Brasil
+            prod_ranking = prod_ano.sort_values('Producao_Kg', ascending=False).reset_index(drop=True)
+            prod_ranking['Ranking'] = range(1, len(prod_ranking) + 1)
             
-            df_merged = pd.merge(prod_ano, price_ano, on=['Pais', 'Ano'], how='inner')
+            brasil = prod_ranking[prod_ranking['Pais'].str.contains('Brazil', na=False)]
             
-            if not df_merged.empty:
-                df_merged = df_merged[df_merged['Price_USD'] > 0]
-                
-                fig_scatter = px.scatter(
-                    df_merged, 
-                    x='Producao_Ton', 
-                    y='Price_USD', 
-                    size='Colmeias', 
-                    color='Yield_Kg_Colmeia',
-                    hover_name='Pais',
-                    hover_data=['Producao_Ton', 'Price_USD', 'Colmeias'],
-                    labels={
-                        'Producao_Ton': 'Produção (Ton)', 
-                        'Price_USD': 'Preço Produtor (USD)',
-                        'Colmeias': 'Nº Colmeias',
-                        'Yield_Kg_Colmeia': 'Yield (kg/col)'
-                    },
-                    log_x=True,
-                    color_continuous_scale='Viridis'
-                )
-                fig_scatter.update_layout(separators=",.")
-                st.plotly_chart(fig_scatter, use_container_width=True)
-                
-                with st.expander("Ver Tabela Detalhada (FAO)"):
-                    st.dataframe(df_merged[['Pais', 'Producao_Ton', 'Colmeias', 'Yield_Kg_Colmeia', 'Price_USD']].sort_values('Producao_Ton', ascending=False).style.format({
-                        'Producao_Ton': "{:,.0f}",
-                        'Colmeias': "{:,.0f}",
-                        'Yield_Kg_Colmeia': "{:,.1f}",
-                        'Price_USD': "${:,.2f}"
-                    }))
+            if not brasil.empty:
+                br = brasil.iloc[0]
+                st.metric("Ranking Mundial", f"#{int(br['Ranking'])}º")
+                st.metric("Produção", fmt_kg(br['Producao_Kg']))
+                st.metric("Colmeias", fmt_num(br['Colmeias']))
+                st.metric("Produtividade", f"{fmt_dec(br['Produtividade_Kg'])} kg/col")
             else:
-                 st.info("Sem dados de preço cruzados para este ano.")
+                st.info("Brasil não encontrado nos dados do período.")
+        
+        st.markdown("---")
+        
+        # ===== EVOLUÇÃO 3 ANOS: BRASIL vs TOP 5 =====
+        st.subheader("📈 Evolução da Produção (3 Anos)")
+        
+        # Top 5 do último ano + Brasil
+        top5_paises = prod_ano.nlargest(5, 'Producao_Kg')['Pais'].tolist()
+        if 'Brazil' not in top5_paises:
+            paises_evolucao = top5_paises + ['Brazil']
+        else:
+            paises_evolucao = top5_paises
+        
+        df_evolucao = df_fao_prod[df_fao_prod['Pais'].isin(paises_evolucao)].copy()
+        df_evolucao = df_evolucao.sort_values('Ano')
+        
+        if not df_evolucao.empty:
+            fig_evolucao = px.line(
+                df_evolucao,
+                x='Ano',
+                y='Producao_Kg',
+                color='Pais',
+                markers=True,
+                labels={'Producao_Kg': 'Produção (kg)', 'Ano': 'Ano'}
+            )
+            fig_evolucao.update_layout(separators=",.", legend_title="País")
+            st.plotly_chart(fig_evolucao, use_container_width=True)
+        else:
+            st.info("Dados insuficientes para evolução.")
+        
+        st.markdown("---")
+        
+        # ===== PRODUTIVIDADE: COLMEIAS vs PRODUTIVIDADE =====
+        st.subheader("🐝 Análise de Produtividade (Colmeias vs Kg/Colmeia)")
+        st.caption("Tamanho = Produção Total | Cor = Produtividade")
+        
+        # Filtrar países com dados válidos (mín. 1000 colmeias para evitar outliers)
+        df_produtividade = prod_ano[(prod_ano['Colmeias'] > 1000) & (prod_ano['Produtividade_Kg'] > 0)].copy()
+        
+        if not df_produtividade.empty:
+            # Destacar Brasil
+            df_produtividade['E_Brasil'] = df_produtividade['Pais'].str.contains('Brazil', na=False)
+            
+            fig_scatter = px.scatter(
+                df_produtividade,
+                x='Colmeias',
+                y='Produtividade_Kg',
+                size='Producao_Kg',
+                color='Produtividade_Kg',
+                hover_name='Pais',
+                hover_data={
+                    'Colmeias': ':,.0f',
+                    'Produtividade_Kg': ':.1f',
+                    'Producao_Kg': ':,.0f'
+                },
+                labels={
+                    'Colmeias': 'Nº de Colmeias',
+                    'Produtividade_Kg': 'Produtividade (kg/colmeia)',
+                    'Producao_Kg': 'Produção (kg)'
+                },
+                color_continuous_scale='Viridis'
+            )
+            fig_scatter.update_layout(separators=",.")
+            
+            # Marcar Brasil com borda
+            brasil_data = df_produtividade[df_produtividade['E_Brasil']]
+            if not brasil_data.empty:
+                fig_scatter.add_scatter(
+                    x=brasil_data['Colmeias'],
+                    y=brasil_data['Produtividade_Kg'],
+                    mode='markers',
+                    marker=dict(size=20, color='rgba(0,0,0,0)', line=dict(color='#009c3b', width=3)),
+                    name='Brasil',
+                    showlegend=True
+                )
+            
+            st.plotly_chart(fig_scatter, use_container_width=True)
+        else:
+            st.info("Dados insuficientes para análise de produtividade.")
+        
+        # ===== TABELA DETALHADA =====
+        with st.expander("📊 Ver Tabela Completa"):
+            # Merge com preços se disponível
+            if not price_ano.empty:
+                df_tabela = pd.merge(prod_ano, price_ano[['Pais', 'Preco_USD_Kg']], on='Pais', how='left')
+            else:
+                df_tabela = prod_ano.copy()
+                df_tabela['Preco_USD_Kg'] = None
+            
+            df_tabela = df_tabela.sort_values('Producao_Kg', ascending=False)
+            
+            # Formatar colunas
+            colunas_show = ['Pais', 'Producao_Kg', 'Colmeias', 'Produtividade_Kg']
+            if 'Preco_USD_Kg' in df_tabela.columns:
+                colunas_show.append('Preco_USD_Kg')
+            
+            st.dataframe(
+                df_tabela[colunas_show].style.format({
+                    'Producao_Kg': '{:,.0f}',
+                    'Colmeias': '{:,.0f}',
+                    'Produtividade_Kg': '{:,.1f}',
+                    'Preco_USD_Kg': 'US$ {:,.2f}'
+                }, na_rep='-'),
+                use_container_width=True
+            )
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Desenvolvido por AntiGravity")
