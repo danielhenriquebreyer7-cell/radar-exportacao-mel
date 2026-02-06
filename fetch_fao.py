@@ -72,8 +72,8 @@ def process_zip(zip_path, name, item_code, elements, debug=False):
                 if name == "production":
                     # 1. Mel (1182) -> Produção (5510)
                     mask_honey = (target_df['Item Code'] == 1182) & (target_df['Element Code'] == 5510)
-                    # 2. Colmeias (1181) -> Stocks (5111)
-                    mask_hives = (target_df['Item Code'] == 1181) & (target_df['Element Code'] == 5111)
+                    # 2. Colmeias (1181) -> Stocks (5114)
+                    mask_hives = (target_df['Item Code'] == 1181) & (target_df['Element Code'] == 5114)
                     mask = mask_honey | mask_hives
                 else:
                     # Preços (Item 1182, Elementos passados)

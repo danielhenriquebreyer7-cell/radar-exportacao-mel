@@ -267,8 +267,8 @@ def process_comtrade_data(subscription_key):
             df_prod = df_prod[df_prod['Area Code'] < 5000]
             
             # 2. Pivotar para unir Production e Stocks
-            # Mapear Element Code: 5510 -> Producao_Ton, 5111 -> Colmeias
-            elem_map = {5510: 'Producao_Ton', 5111: 'Colmeias'}
+            # Mapear Element Code: 5510 -> Producao_Ton, 5114 -> Colmeias
+            elem_map = {5510: 'Producao_Ton', 5114: 'Colmeias'}
             df_prod['Type'] = df_prod['Element Code'].map(elem_map)
             df_prod = df_prod.dropna(subset=['Type'])
             
