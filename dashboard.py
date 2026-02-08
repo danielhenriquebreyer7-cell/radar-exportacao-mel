@@ -40,18 +40,39 @@ def load_data():
     except Exception:
         df_mensal = pd.DataFrame()
         
+    # FAO - Dados novos (download manual)
     try:
-        df_fao_prod = pd.read_sql("SELECT * FROM fao_production", conn)
+        df_fao_prod = pd.read_sql("SELECT * FROM fao_production_new", conn)
     except Exception:
-        df_fao_prod = pd.DataFrame()
+        try:
+            df_fao_prod = pd.read_sql("SELECT * FROM fao_production", conn)
+        except Exception:
+            df_fao_prod = pd.DataFrame()
 
     try:
         df_fao_price = pd.read_sql("SELECT * FROM fao_prices", conn)
     except Exception:
         df_fao_price = pd.DataFrame()
+    
+    try:
+        df_fao_value = pd.read_sql("SELECT * FROM fao_value", conn)
+    except Exception:
+        df_fao_value = pd.DataFrame()
+    
+    try:
+        df_fao_trade = pd.read_sql("SELECT * FROM fao_trade", conn)
+    except Exception:
+        df_fao_trade = pd.DataFrame()
+    
+    try:
+        df_fao_indices = pd.read_sql("SELECT * FROM fao_indices", conn)
+    except Exception:
+        df_fao_indices = pd.DataFrame()
 
     conn.close()
-    return df_br, df_global, df_bilateral, df_mensal, df_fao_prod, df_fao_price
+    return df_br, df_global, df_bilateral, df_mensal, df_fao_prod, df_fao_price, df_fao_value, df_fao_trade, df_fao_indices
+
+
 
 def format_br(val, is_currency=False):
     """Formata números para o padrão brasileiro."""
@@ -61,7 +82,7 @@ def format_br(val, is_currency=False):
     return f"{val:,.0f}".replace(",", ".")
 
 try:
-    df, df_global, df_bilateral, df_mensal, df_fao_prod, df_fao_price = load_data()
+    df, df_global, df_bilateral, df_mensal, df_fao_prod, df_fao_price, df_fao_value, df_fao_trade, df_fao_indices = load_data()
 except Exception:
     st.error("Banco de dados não encontrado. Por favor, execute o processamento primeiro.")
     st.stop()
@@ -408,15 +429,26 @@ elif view_mode == "Inteligência de Produção (FAO)":
         
         # ===== MÉTRICAS GLOBAIS =====
         total_prod_kg = prod_ano['Producao_Kg'].sum()
-        total_colmeias = prod_ano['Colmeias'].sum()
+        
+        # Colmeias podem não existir nos novos dados
+        has_colmeias = 'Colmeias' in prod_ano.columns and prod_ano['Colmeias'].notna().any()
+        total_colmeias = prod_ano['Colmeias'].sum() if has_colmeias else 0
         produtividade_global = total_prod_kg / total_colmeias if total_colmeias > 0 else 0
-        preco_medio_kg = price_ano['Preco_USD_Kg'].mean() if not price_ano.empty else 0
+        preco_medio_kg = price_ano['Preco_USD_Kg'].mean() if not price_ano.empty and 'Preco_USD_Kg' in price_ano.columns else 0
+        
+        # Número de países com produção
+        num_paises = prod_ano['Pais'].nunique()
         
         c1, c2, c3, c4 = st.columns(4)
         c1.metric(f"Produção Global ({sel_ano})", fmt_kg(total_prod_kg))
-        c2.metric("Colmeias (Estoque)", fmt_num(total_colmeias))
-        c3.metric("Produtividade Média", f"{fmt_dec(produtividade_global)} kg/colmeia")
-        c4.metric("Preço Médio", f"US$ {fmt_dec(preco_medio_kg)}/kg")
+        c2.metric("Países Produtores", fmt_num(num_paises))
+        if has_colmeias and total_colmeias > 0:
+            c3.metric("Produtividade Média", f"{fmt_dec(produtividade_global)} kg/colmeia")
+        else:
+            # Média por país como alternativa
+            media_pais = total_prod_kg / num_paises if num_paises > 0 else 0
+            c3.metric("Média por País", fmt_kg(media_pais))
+        c4.metric("Preço Médio", f"US$ {fmt_dec(preco_medio_kg)}/kg" if preco_medio_kg > 0 else "N/D")
         
         st.markdown("---")
         
@@ -460,8 +492,13 @@ elif view_mode == "Inteligência de Produção (FAO)":
                 br = brasil.iloc[0]
                 st.metric("Ranking Mundial", f"#{int(br['Ranking'])}º")
                 st.metric("Produção", fmt_kg(br['Producao_Kg']))
-                st.metric("Colmeias", fmt_num(br['Colmeias']))
-                st.metric("Produtividade", f"{fmt_dec(br['Produtividade_Kg'])} kg/col")
+                if has_colmeias and 'Colmeias' in br.index and pd.notna(br.get('Colmeias', None)):
+                    st.metric("Colmeias", fmt_num(br['Colmeias']))
+                if 'Produtividade_Kg' in br.index and pd.notna(br.get('Produtividade_Kg', None)):
+                    st.metric("Produtividade", f"{fmt_dec(br['Produtividade_Kg'])} kg/col")
+                # Participação no mercado global
+                share = (br['Producao_Kg'] / total_prod_kg * 100) if total_prod_kg > 0 else 0
+                st.metric("Participação Global", f"{share:.1f}%")
             else:
                 st.info("Brasil não encontrado nos dados do período.")
         
@@ -497,52 +534,140 @@ elif view_mode == "Inteligência de Produção (FAO)":
         st.markdown("---")
         
         # ===== PRODUTIVIDADE: COLMEIAS vs PRODUTIVIDADE =====
-        st.subheader("🐝 Análise de Produtividade (Colmeias vs Kg/Colmeia)")
-        st.caption("Tamanho = Produção Total | Cor = Produtividade")
-        
-        # Filtrar países com dados válidos (mín. 1000 colmeias para evitar outliers)
-        df_produtividade = prod_ano[(prod_ano['Colmeias'] > 1000) & (prod_ano['Produtividade_Kg'] > 0)].copy()
-        
-        if not df_produtividade.empty:
-            # Destacar Brasil
-            df_produtividade['E_Brasil'] = df_produtividade['Pais'].str.contains('Brazil', na=False)
+        # Só mostrar se temos dados de colmeias
+        if has_colmeias and 'Produtividade_Kg' in prod_ano.columns:
+            st.subheader("🐝 Análise de Produtividade (Colmeias vs Kg/Colmeia)")
+            st.caption("Tamanho = Produção Total | Cor = Produtividade")
             
-            fig_scatter = px.scatter(
-                df_produtividade,
-                x='Colmeias',
-                y='Produtividade_Kg',
-                size='Producao_Kg',
-                color='Produtividade_Kg',
-                hover_name='Pais',
-                hover_data={
-                    'Colmeias': ':,.0f',
-                    'Produtividade_Kg': ':.1f',
-                    'Producao_Kg': ':,.0f'
-                },
-                labels={
-                    'Colmeias': 'Nº de Colmeias',
-                    'Produtividade_Kg': 'Produtividade (kg/colmeia)',
-                    'Producao_Kg': 'Produção (kg)'
-                },
-                color_continuous_scale='Viridis'
-            )
-            fig_scatter.update_layout(separators=",.")
-            
-            # Marcar Brasil com borda
-            brasil_data = df_produtividade[df_produtividade['E_Brasil']]
-            if not brasil_data.empty:
-                fig_scatter.add_scatter(
-                    x=brasil_data['Colmeias'],
-                    y=brasil_data['Produtividade_Kg'],
-                    mode='markers',
-                    marker=dict(size=20, color='rgba(0,0,0,0)', line=dict(color='#009c3b', width=3)),
-                    name='Brasil',
-                    showlegend=True
+            # Filtrar países com dados válidos (mín. 1000 colmeias para evitar outliers)
+            df_produtividade = prod_ano[(prod_ano['Colmeias'] > 1000) & (prod_ano['Produtividade_Kg'] > 0)].copy()
+        
+            if not df_produtividade.empty:
+                # Destacar Brasil
+                df_produtividade['E_Brasil'] = df_produtividade['Pais'].str.contains('Brazil', na=False)
+                
+                fig_scatter = px.scatter(
+                    df_produtividade,
+                    x='Colmeias',
+                    y='Produtividade_Kg',
+                    size='Producao_Kg',
+                    color='Produtividade_Kg',
+                    hover_name='Pais',
+                    hover_data={
+                        'Colmeias': ':,.0f',
+                        'Produtividade_Kg': ':.1f',
+                        'Producao_Kg': ':,.0f'
+                    },
+                    labels={
+                        'Colmeias': 'Nº de Colmeias',
+                        'Produtividade_Kg': 'Produtividade (kg/colmeia)',
+                        'Producao_Kg': 'Produção (kg)'
+                    },
+                    color_continuous_scale='Viridis'
                 )
+                fig_scatter.update_layout(separators=",.")
+                
+                # Marcar Brasil com borda
+                brasil_data = df_produtividade[df_produtividade['E_Brasil']]
+                if not brasil_data.empty:
+                    fig_scatter.add_scatter(
+                        x=brasil_data['Colmeias'],
+                        y=brasil_data['Produtividade_Kg'],
+                        mode='markers',
+                        marker=dict(size=20, color='rgba(0,0,0,0)', line=dict(color='#009c3b', width=3)),
+                        name='Brasil',
+                        showlegend=True
+                    )
+                
+                st.plotly_chart(fig_scatter, use_container_width=True)
+            else:
+                st.info("Dados insuficientes para análise de produtividade.")
+        
+        # ===== COMÉRCIO GLOBAL (FAO) =====
+        if not df_fao_trade.empty:
+            st.markdown("---")
+            st.subheader("🌐 Balança Comercial Global (FAO)")
             
-            st.plotly_chart(fig_scatter, use_container_width=True)
-        else:
-            st.info("Dados insuficientes para análise de produtividade.")
+            trade_ano = df_fao_trade[df_fao_trade['Ano'] == sel_ano].copy()
+            
+            if not trade_ano.empty:
+                # Top 15 maiores exportadores líquidos
+                trade_ano = trade_ano.sort_values('Balanca_1000USD', ascending=False)
+                
+                col_exp, col_imp = st.columns(2)
+                
+                with col_exp:
+                    st.markdown("##### 🚢 Maiores Exportadores Líquidos")
+                    top_exporters = trade_ano.head(10).copy()
+                    top_exporters['Cor'] = top_exporters['Pais'].apply(lambda x: '#009c3b' if 'Brazil' in str(x) else '#2ecc71')
+                    
+                    fig_exp = px.bar(
+                        top_exporters,
+                        x='Balanca_1000USD',
+                        y='Pais',
+                        orientation='h',
+                        color='Cor',
+                        color_discrete_map='identity',
+                        labels={'Balanca_1000USD': 'Saldo (1000 USD)', 'Pais': ''}
+                    )
+                    fig_exp.update_layout(
+                        yaxis={'categoryorder': 'total ascending'},
+                        showlegend=False,
+                        separators=",."
+                    )
+                    st.plotly_chart(fig_exp, use_container_width=True)
+                
+                with col_imp:
+                    st.markdown("##### 🛒 Maiores Importadores Líquidos")
+                    top_importers = trade_ano.tail(10).sort_values('Balanca_1000USD').copy()
+                    top_importers['Cor'] = '#e74c3c'
+                    
+                    fig_imp = px.bar(
+                        top_importers,
+                        x='Balanca_1000USD',
+                        y='Pais',
+                        orientation='h',
+                        color='Cor',
+                        color_discrete_map='identity',
+                        labels={'Balanca_1000USD': 'Saldo (1000 USD)', 'Pais': ''}
+                    )
+                    fig_imp.update_layout(
+                        yaxis={'categoryorder': 'total descending'},
+                        showlegend=False,
+                        separators=",."
+                    )
+                    st.plotly_chart(fig_imp, use_container_width=True)
+        
+        # ===== VALOR DA PRODUÇÃO =====
+        if not df_fao_value.empty:
+            st.markdown("---")
+            st.subheader("💰 Valor da Produção Agrícola (FAO)")
+            
+            value_ano = df_fao_value[df_fao_value['Ano'] == sel_ano].copy()
+            
+            if not value_ano.empty:
+                # Top 15 por valor
+                top_value = value_ano.nlargest(15, 'Valor_1000_IntDollar').copy()
+                top_value['Cor'] = top_value['Pais'].apply(lambda x: '#009c3b' if 'Brazil' in str(x) else '#3498db')
+                
+                fig_value = px.bar(
+                    top_value,
+                    x='Valor_1000_IntDollar',
+                    y='Pais',
+                    orientation='h',
+                    text=top_value['Valor_1000_IntDollar'].apply(lambda x: f"${x/1000:.1f}M"),
+                    color='Cor',
+                    color_discrete_map='identity',
+                    labels={'Valor_1000_IntDollar': 'Valor (1000 Int$)', 'Pais': ''}
+                )
+                fig_value.update_layout(
+                    yaxis={'categoryorder': 'total ascending'},
+                    showlegend=False,
+                    separators=",.",
+                    title=f"Top 15 - Valor Bruto da Produção de Mel ({sel_ano})"
+                )
+                fig_value.update_traces(textposition='outside')
+                st.plotly_chart(fig_value, use_container_width=True)
         
         # ===== TABELA DETALHADA =====
         with st.expander("📊 Ver Tabela Completa"):
@@ -556,17 +681,24 @@ elif view_mode == "Inteligência de Produção (FAO)":
             df_tabela = df_tabela.sort_values('Producao_Kg', ascending=False)
             
             # Formatar colunas
-            colunas_show = ['Pais', 'Producao_Kg', 'Colmeias', 'Produtividade_Kg']
+            colunas_show = ['Pais', 'Producao_Kg']
+            if 'Colmeias' in df_tabela.columns:
+                colunas_show.append('Colmeias')
+            if 'Produtividade_Kg' in df_tabela.columns:
+                colunas_show.append('Produtividade_Kg')
             if 'Preco_USD_Kg' in df_tabela.columns:
                 colunas_show.append('Preco_USD_Kg')
             
+            format_dict = {'Producao_Kg': '{:,.0f}'}
+            if 'Colmeias' in colunas_show:
+                format_dict['Colmeias'] = '{:,.0f}'
+            if 'Produtividade_Kg' in colunas_show:
+                format_dict['Produtividade_Kg'] = '{:,.1f}'
+            if 'Preco_USD_Kg' in colunas_show:
+                format_dict['Preco_USD_Kg'] = 'US$ {:,.2f}'
+            
             st.dataframe(
-                df_tabela[colunas_show].style.format({
-                    'Producao_Kg': '{:,.0f}',
-                    'Colmeias': '{:,.0f}',
-                    'Produtividade_Kg': '{:,.1f}',
-                    'Preco_USD_Kg': 'US$ {:,.2f}'
-                }, na_rep='-'),
+                df_tabela[colunas_show].style.format(format_dict, na_rep='-'),
                 use_container_width=True
             )
 
