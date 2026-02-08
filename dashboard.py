@@ -7,6 +7,9 @@ import io
 # Configuração da página para um visual premium
 st.set_page_config(page_title="Radar de Exportação: Mel Natural", layout="wide")
 
+# ⚡ MENSAGEM DE CONFIRMAÇÃO - PODE REMOVER DEPOIS ⚡
+st.success("🎉 OLHA EU AQUI! Dashboard atualizado em 08/02/2026 às 08:55 - Dados FAO integrados!")
+
 # Estilo CSS customizado
 st.markdown("""
 <style>
