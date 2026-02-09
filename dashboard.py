@@ -188,7 +188,7 @@ if view_mode == "Visão Brasil (Exportação)" or view_mode == "Visão Brasil (L
                 thickness = 20,
                 line = dict(color = "black", width = 0.5),
                 label = all_nodes,
-                color = "#FFD700" # Dourado característico do mel
+                color = "orange" # Laranja solicitado pelo usuário
             ),
             link = dict(
                 source = source_indices,
