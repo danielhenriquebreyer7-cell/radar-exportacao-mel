@@ -200,6 +200,77 @@ if view_mode == "Visão Brasil (Exportação)" or view_mode == "Visão Brasil (L
         else:
             st.info("Sem dados.")
 
+
+    # --- DIAGRAMA DE SANKEY (MUNICÍPIO -> PAÍS) ---
+    st.markdown("---")
+    st.subheader("🤝 Fluxo de Exportação: Município ➝ País (Quem vende para quem?)")
+
+    if not df_filtered.empty:
+        # Agrupar dados
+        fluxo_br = df_filtered.groupby(['Municipio', 'Pais']).agg({
+            'Valor_USD': 'sum',
+            'Peso_KG': 'sum'
+        }).reset_index()
+        
+        # Ordenar por valor e pegar top 50 (para performance e visualização)
+        fluxo_br = fluxo_br.sort_values('Valor_USD', ascending=False).head(50)
+        
+        # Calcular métricas extras
+        fluxo_br['Peso_Ton'] = fluxo_br['Peso_KG'] / 1000
+        fluxo_br['Preco_Medio'] = fluxo_br['Valor_USD'] / fluxo_br['Peso_KG']
+        
+        # Criar nós do Sankey
+        all_nodes = list(pd.concat([fluxo_br['Municipio'], fluxo_br['Pais']]).unique())
+        node_map = {name: i for i, name in enumerate(all_nodes)}
+        
+        source_indices = fluxo_br['Municipio'].map(node_map).tolist()
+        target_indices = fluxo_br['Pais'].map(node_map).tolist()
+        values = fluxo_br['Valor_USD'].tolist()
+        
+        # Formatadores brasileiros
+        fmt_usd = lambda x: f"US$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        fmt_ton = lambda x: f"{x:,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        
+        custom_v = fluxo_br['Valor_USD'].apply(fmt_usd).tolist()
+        custom_w = fluxo_br['Peso_Ton'].apply(fmt_ton).tolist()
+        custom_p = fluxo_br['Preco_Medio'].apply(fmt_usd).tolist() # Reutiliza fmt_usd pois é moeda
+        
+        # Zipar para customdata
+        custom_data_zipped = list(zip(custom_v, custom_w, custom_p))
+        
+        import plotly.graph_objects as go
+        
+        fig_sankey_br = go.Figure(data=[go.Sankey(
+            textfont={'size': 12, 'color': 'black'},
+            node = dict(
+                pad = 15,
+                thickness = 20,
+                line = dict(color = "black", width = 0.5),
+                label = all_nodes,
+                color = "#FFD700" # Dourado característico do mel
+            ),
+            link = dict(
+                source = source_indices,
+                target = target_indices,
+                value = values,
+                customdata = custom_data_zipped,
+                hovertemplate='<b>%{source.label}</b> ➝ <b>%{target.label}</b><br>' +
+                              'Valor: %{customdata[0]}<br>' +
+                              'Peso: %{customdata[1]} Ton<br>' +
+                              'Preço Médio: %{customdata[2]}/kg<extra></extra>'
+            )
+        )])
+        
+        fig_sankey_br.update_layout(
+            title_text=f"Top {len(fluxo_br)} Rotas Comerciais (USD)", 
+            font_size=12, 
+            height=700,
+            separators=",."
+        )
+        st.plotly_chart(fig_sankey_br, use_container_width=True)
+    else:
+        st.info("Sem dados suficientes para gerar o diagrama de fluxo.")
+
     # --- Tabela Detalhada Restaurada ---
     st.markdown("---")
     st.subheader("📋 Relatório Detalhado")
