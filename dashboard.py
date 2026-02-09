@@ -142,67 +142,8 @@ if view_mode == "Visão Brasil (Exportação)" or view_mode == "Visão Brasil (L
     
     st.markdown("---")
     
-    st.subheader("📈 Evolução Temporal (KG)")
-    if not df_filtered.empty:
-        evolucao = df_filtered.groupby(['Ano', 'Mes', 'Mes_Num'])['Peso_KG'].sum().reset_index()
-        evolucao = evolucao.sort_values(['Ano', 'Mes_Num'])
-        fig_evolucao = px.line(evolucao, x='Mes', y='Peso_KG', color='Ano', markers=True)
-        fig_evolucao.update_layout(separators=",.", hovermode="x unified")
-        fig_evolucao.update_traces(hovertemplate='<b>%{y:,.0f} KG</b>')
-        st.plotly_chart(fig_evolucao, use_container_width=True)
-    else:
-        st.info("Sem dados para o período selecionado.")
-    
-    row1_col1, row1_col2 = st.columns(2)
-    with row1_col1:
-        st.subheader("Destinos Principais (US$ FOB)")
-        if not df_filtered.empty:
-            df_filtered['Pais'] = df_filtered['Pais'].astype(str)
-            destinos = df_filtered.groupby('Pais').agg({
-                'Valor_USD': 'sum',
-                'Peso_KG': 'sum'
-            }).reset_index()
-            destinos['Preco_Medio'] = destinos['Valor_USD'] / destinos['Peso_KG']
-            destinos = destinos.sort_values('Valor_USD', ascending=False).head(10)
-            
-            fig_destinos = px.bar(destinos, x='Valor_USD', y='Pais', orientation='h', 
-                                  color='Valor_USD', color_continuous_scale='YlOrBr',
-                                  custom_data=['Peso_KG', 'Preco_Medio'])
-                                  
-            fig_destinos.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False, separators=",.")
-            fig_destinos.update_traces(
-                hovertemplate="<b>%{y}</b><br>Valor: US$ %{x:,.2f}<br>Peso: %{customdata[0]:,.0f} KG<br>Preço Médio: US$ %{customdata[1]:,.2f}<extra></extra>"
-            )
-            st.plotly_chart(fig_destinos, use_container_width=True)
-        else:
-            st.info("Sem dados.")
-            
-    with row1_col2:
-        st.subheader("Municípios Exportadores (KG)")
-        if not df_filtered.empty:
-            df_filtered['Municipio'] = df_filtered['Municipio'].astype(str)
-            muns = df_filtered.groupby('Municipio').agg({
-                'Valor_USD': 'sum',
-                'Peso_KG': 'sum'
-            }).reset_index()
-            muns['Preco_Medio'] = muns['Valor_USD'] / muns['Peso_KG']
-            muns = muns.sort_values('Peso_KG', ascending=False).head(10)
-            
-            fig_muns = px.bar(muns, x='Peso_KG', y='Municipio', orientation='h', 
-                              color='Peso_KG', color_continuous_scale='Blues',
-                              custom_data=['Valor_USD', 'Preco_Medio'])
-                              
-            fig_muns.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False, separators=",.")
-            fig_muns.update_traces(
-                hovertemplate="<b>%{y}</b><br>Peso: %{x:,.0f} KG<br>Valor: US$ %{customdata[0]:,.2f}<br>Preço Médio: US$ %{customdata[1]:,.2f}<extra></extra>"
-            )
-            st.plotly_chart(fig_muns, use_container_width=True)
-        else:
-            st.info("Sem dados.")
-
 
     # --- DIAGRAMA DE SANKEY (MUNICÍPIO -> PAÍS) ---
-    st.markdown("---")
     st.subheader("🤝 Fluxo de Exportação: Município ➝ País (Quem vende para quem?)")
 
     if not df_filtered.empty:
@@ -270,6 +211,68 @@ if view_mode == "Visão Brasil (Exportação)" or view_mode == "Visão Brasil (L
         st.plotly_chart(fig_sankey_br, use_container_width=True)
     else:
         st.info("Sem dados suficientes para gerar o diagrama de fluxo.")
+
+    st.markdown("---")
+
+    row1_col1, row1_col2 = st.columns(2)
+    with row1_col1:
+        st.subheader("Destinos Principais (US$ FOB)")
+        if not df_filtered.empty:
+            df_filtered['Pais'] = df_filtered['Pais'].astype(str)
+            destinos = df_filtered.groupby('Pais').agg({
+                'Valor_USD': 'sum',
+                'Peso_KG': 'sum'
+            }).reset_index()
+            destinos['Preco_Medio'] = destinos['Valor_USD'] / destinos['Peso_KG']
+            destinos = destinos.sort_values('Valor_USD', ascending=False).head(10)
+            
+            fig_destinos = px.bar(destinos, x='Valor_USD', y='Pais', orientation='h', 
+                                  color='Valor_USD', color_continuous_scale='YlOrBr',
+                                  custom_data=['Peso_KG', 'Preco_Medio'])
+                                  
+            fig_destinos.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False, separators=",.")
+            fig_destinos.update_traces(
+                hovertemplate="<b>%{y}</b><br>Valor: US$ %{x:,.2f}<br>Peso: %{customdata[0]:,.0f} KG<br>Preço Médio: US$ %{customdata[1]:,.2f}<extra></extra>"
+            )
+            st.plotly_chart(fig_destinos, use_container_width=True)
+        else:
+            st.info("Sem dados.")
+            
+    with row1_col2:
+        st.subheader("Municípios Exportadores (KG)")
+        if not df_filtered.empty:
+            df_filtered['Municipio'] = df_filtered['Municipio'].astype(str)
+            muns = df_filtered.groupby('Municipio').agg({
+                'Valor_USD': 'sum',
+                'Peso_KG': 'sum'
+            }).reset_index()
+            muns['Preco_Medio'] = muns['Valor_USD'] / muns['Peso_KG']
+            muns = muns.sort_values('Peso_KG', ascending=False).head(10)
+            
+            fig_muns = px.bar(muns, x='Peso_KG', y='Municipio', orientation='h', 
+                              color='Peso_KG', color_continuous_scale='Blues',
+                              custom_data=['Valor_USD', 'Preco_Medio'])
+                              
+            fig_muns.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False, separators=",.")
+            fig_muns.update_traces(
+                hovertemplate="<b>%{y}</b><br>Peso: %{x:,.0f} KG<br>Valor: US$ %{customdata[0]:,.2f}<br>Preço Médio: US$ %{customdata[1]:,.2f}<extra></extra>"
+            )
+            st.plotly_chart(fig_muns, use_container_width=True)
+        else:
+            st.info("Sem dados.")
+
+    st.markdown("---")
+    
+    st.subheader("📈 Evolução Temporal (KG)")
+    if not df_filtered.empty:
+        evolucao = df_filtered.groupby(['Ano', 'Mes', 'Mes_Num'])['Peso_KG'].sum().reset_index()
+        evolucao = evolucao.sort_values(['Ano', 'Mes_Num'])
+        fig_evolucao = px.line(evolucao, x='Mes', y='Peso_KG', color='Ano', markers=True)
+        fig_evolucao.update_layout(separators=",.", hovermode="x unified")
+        fig_evolucao.update_traces(hovertemplate='<b>%{y:,.0f} KG</b>')
+        st.plotly_chart(fig_evolucao, use_container_width=True)
+    else:
+        st.info("Sem dados para o período selecionado.")
 
     # --- Tabela Detalhada Restaurada ---
     st.markdown("---")
