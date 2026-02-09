@@ -66,8 +66,8 @@ if __name__ == "__main__":
     download_metadata()
     
     current_year = datetime.now().year
-    # 2026 pode não ter dados ainda, vamos pegar 2023, 2024 e 2025
-    years_to_download = [2023, 2024, 2025]
+    # Incluindo 2026 conforme solicitado
+    years_to_download = [2023, 2024, 2025, 2026]
     
     print(f"Iniciando download de dados de exportação para os anos: {years_to_download}")
     download_export_data(years_to_download)

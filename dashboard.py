@@ -72,8 +72,13 @@ def load_data():
     except Exception:
         df_fao_indices = pd.DataFrame()
 
+    try:
+        df_ibge = pd.read_sql("SELECT * FROM ibge_ppm", conn)
+    except Exception:
+        df_ibge = pd.DataFrame()
+
     conn.close()
-    return df_br, df_global, df_bilateral, df_mensal, df_fao_prod, df_fao_price, df_fao_value, df_fao_trade, df_fao_indices
+    return df_br, df_global, df_bilateral, df_mensal, df_fao_prod, df_fao_price, df_fao_value, df_fao_trade, df_fao_indices, df_ibge
 
 
 
@@ -85,7 +90,7 @@ def format_br(val, is_currency=False):
     return f"{val:,.0f}".replace(",", ".")
 
 try:
-    df, df_global, df_bilateral, df_mensal, df_fao_prod, df_fao_price, df_fao_value, df_fao_trade, df_fao_indices = load_data()
+    df, df_global, df_bilateral, df_mensal, df_fao_prod, df_fao_price, df_fao_value, df_fao_trade, df_fao_indices, df_ibge = load_data()
 except Exception:
     st.error("Banco de dados não encontrado. Por favor, execute o processamento primeiro.")
     st.stop()
@@ -95,10 +100,10 @@ except Exception:
 # Navegação Lateral
 st.sidebar.title("Navegação")
 view_mode = st.sidebar.radio("Selecione a Visão:", 
-    ["Visão Brasil (Local)", "Visão Global (Mundo)", "Inteligência de Produção (FAO)"]
+    ["Visão Brasil (Exportação)", "Visão Global (Mundo)", "Inteligência de Produção (FAO)", "Produção Interna (IBGE)"]
 )
 
-if view_mode == "Visão Brasil (Local)":
+if view_mode == "Visão Brasil (Exportação)" or view_mode == "Visão Brasil (Local)":
     # --- CÓDIGO ORIGINAL DA VISÃO BRASIL ---
     st.sidebar.header("Filtros Brasil")
     anos = sorted(df['Ano'].unique(), reverse=True)
@@ -142,27 +147,100 @@ if view_mode == "Visão Brasil (Local)":
         evolucao = df_filtered.groupby(['Ano', 'Mes', 'Mes_Num'])['Peso_KG'].sum().reset_index()
         evolucao = evolucao.sort_values(['Ano', 'Mes_Num'])
         fig_evolucao = px.line(evolucao, x='Mes', y='Peso_KG', color='Ano', markers=True)
-        fig_evolucao.update_layout(separators=",.")
+        fig_evolucao.update_layout(separators=",.", hovermode="x unified")
+        fig_evolucao.update_traces(hovertemplate='<b>%{y:,.0f} KG</b>')
         st.plotly_chart(fig_evolucao, use_container_width=True)
+    else:
+        st.info("Sem dados para o período selecionado.")
     
     row1_col1, row1_col2 = st.columns(2)
     with row1_col1:
-        st.subheader("Destinos Principais")
+        st.subheader("Destinos Principais (US$ FOB)")
         if not df_filtered.empty:
-            destinos = df_filtered.groupby('Pais')['Valor_USD'].sum().reset_index().sort_values('Valor_USD', ascending=False).head(10)
-            fig_destinos = px.bar(destinos, x='Valor_USD', y='Pais', orientation='h', color='Valor_USD')
-            fig_destinos.update_layout(yaxis={'categoryorder':'total ascending'}, separators=",.")
+            df_filtered['Pais'] = df_filtered['Pais'].astype(str)
+            destinos = df_filtered.groupby('Pais').agg({
+                'Valor_USD': 'sum',
+                'Peso_KG': 'sum'
+            }).reset_index()
+            destinos['Preco_Medio'] = destinos['Valor_USD'] / destinos['Peso_KG']
+            destinos = destinos.sort_values('Valor_USD', ascending=False).head(10)
+            
+            fig_destinos = px.bar(destinos, x='Valor_USD', y='Pais', orientation='h', 
+                                  color='Valor_USD', color_continuous_scale='YlOrBr',
+                                  custom_data=['Peso_KG', 'Preco_Medio'])
+                                  
+            fig_destinos.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False, separators=",.")
+            fig_destinos.update_traces(
+                hovertemplate="<b>%{y}</b><br>Valor: US$ %{x:,.2f}<br>Peso: %{customdata[0]:,.0f} KG<br>Preço Médio: US$ %{customdata[1]:,.2f}<extra></extra>"
+            )
             st.plotly_chart(fig_destinos, use_container_width=True)
+        else:
+            st.info("Sem dados.")
             
     with row1_col2:
-        st.subheader("Municípios Exportadores")
+        st.subheader("Municípios Exportadores (KG)")
         if not df_filtered.empty:
-            muns = df_filtered.groupby('Municipio')['Peso_KG'].sum().reset_index().sort_values('Peso_KG', ascending=False).head(10)
-            fig_muns = px.bar(muns, x='Peso_KG', y='Municipio', orientation='h', color='Peso_KG')
-            fig_muns.update_layout(yaxis={'categoryorder':'total ascending'}, separators=",.")
+            df_filtered['Municipio'] = df_filtered['Municipio'].astype(str)
+            muns = df_filtered.groupby('Municipio').agg({
+                'Valor_USD': 'sum',
+                'Peso_KG': 'sum'
+            }).reset_index()
+            muns['Preco_Medio'] = muns['Valor_USD'] / muns['Peso_KG']
+            muns = muns.sort_values('Peso_KG', ascending=False).head(10)
+            
+            fig_muns = px.bar(muns, x='Peso_KG', y='Municipio', orientation='h', 
+                              color='Peso_KG', color_continuous_scale='Blues',
+                              custom_data=['Valor_USD', 'Preco_Medio'])
+                              
+            fig_muns.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False, separators=",.")
+            fig_muns.update_traces(
+                hovertemplate="<b>%{y}</b><br>Peso: %{x:,.0f} KG<br>Valor: US$ %{customdata[0]:,.2f}<br>Preço Médio: US$ %{customdata[1]:,.2f}<extra></extra>"
+            )
             st.plotly_chart(fig_muns, use_container_width=True)
+        else:
+            st.info("Sem dados.")
 
-    # ... (Tabela Detalhada Brasil - Omitindo detalhes para brevidade, mas mantendo funcionalidade se necessário) ...
+    # --- Tabela Detalhada Restaurada ---
+    st.markdown("---")
+    st.subheader("📋 Relatório Detalhado")
+    
+    if not df_filtered.empty:
+        df_display = df_filtered.sort_values(['Ano', 'Mes_Num'], ascending=[False, False]).copy()
+        
+        # Ajuste para ordenação correta: adicionar prefixo numérico (ex: "01 - Janeiro")
+        df_display['Mes'] = df_display['Mes_Num'].astype(str).str.zfill(2) + ' - ' + df_display['Mes'].astype(str)
+        
+        # Adicionar Preço Médio
+        df_display['Preco_Medio'] = df_display['Valor_USD'] / df_display['Peso_KG']
+        
+        # Colunas finais
+        colunas_finais = ['Ano', 'Mes', 'Municipio', 'UF', 'Pais', 'Valor_USD', 'Peso_KG', 'Preco_Medio']
+        df_display = df_display[colunas_finais]
+
+        # Botão Download Excel
+        output = io.BytesIO()
+        df_excel = df_display.copy()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_excel.to_excel(writer, index=False, sheet_name='Exportacoes_Mel')
+        
+        st.download_button(
+            label="📥 Baixar Tabela em Excel (.xlsx)",
+            data=output.getvalue(),
+            file_name=f"exportacoes_mel_detalhado.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
+        # Tabela Formatada
+        st.dataframe(
+            df_display.style.format({
+                'Valor_USD': lambda x: f"US$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                'Peso_KG': lambda x: f"{x:,.0f}".replace(",", ".") + " KG",
+                'Preco_Medio': lambda x: f"US$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            }), 
+            use_container_width=True
+        )
+    else:
+        st.info("Nenhum dado para exibir na tabela.")
     
 elif view_mode == "Visão Global (Mundo)":
     # --- VISÃO GLOBAL (COMTRADE) ---
@@ -437,8 +515,21 @@ elif view_mode == "Inteligência de Produção (FAO)":
         has_colmeias = 'Colmeias' in prod_ano.columns and prod_ano['Colmeias'].notna().any()
         total_colmeias = prod_ano['Colmeias'].sum() if has_colmeias else 0
         produtividade_global = total_prod_kg / total_colmeias if total_colmeias > 0 else 0
-        preco_medio_kg = price_ano['Preco_USD_Kg'].mean() if not price_ano.empty and 'Preco_USD_Kg' in price_ano.columns else 0
         
+        # Preço Médio (Exportação) - Fonte: FAO Trade (fao_trade)
+        # Se disponível, calculamos preço médio de exportação (Valor / Qty)
+        preco_medio_kg = 0
+        if not df_fao_trade.empty:
+            trade_metrics = df_fao_trade[df_fao_trade['Ano'] == sel_ano]
+            total_exp_val = trade_metrics['Export_Value_1000USD'].sum() * 1000
+            total_exp_qty = trade_metrics['Export_Qty_Ton'].sum() * 1000
+            if total_exp_qty > 0:
+                preco_medio_kg = total_exp_val / total_exp_qty
+        
+        # Fallback para tabela de preços antiga se necessário (mas evitar se for ruim)
+        if preco_medio_kg == 0 and not price_ano.empty and 'Preco_USD_Kg' in price_ano.columns:
+             preco_medio_kg = price_ano['Preco_USD_Kg'].mean()
+
         # Número de países com produção
         num_paises = prod_ano['Pais'].nunique()
         
@@ -451,7 +542,9 @@ elif view_mode == "Inteligência de Produção (FAO)":
             # Média por país como alternativa
             media_pais = total_prod_kg / num_paises if num_paises > 0 else 0
             c3.metric("Média por País", fmt_kg(media_pais))
-        c4.metric("Preço Médio", f"US$ {fmt_dec(preco_medio_kg)}/kg" if preco_medio_kg > 0 else "N/D")
+            
+        label_preco = "Preço Médio (Exportação)" if not df_fao_trade.empty else "Preço Médio (Produtor)"
+        c4.metric(label_preco, f"US$ {fmt_dec(preco_medio_kg)}/kg" if preco_medio_kg > 0 else "N/D")
         
         st.markdown("---")
         
@@ -706,4 +799,134 @@ elif view_mode == "Inteligência de Produção (FAO)":
             )
 
 st.sidebar.markdown("---")
+
+# --- VISÃO IBGE (Produção Interna) ---
+if view_mode == "Produção Interna (IBGE)":
+    st.title("🇧🇷 Produção Nacional de Mel (IBGE)")
+    st.markdown("**Fonte:** IBGE (Pesquisa da Pecuária Municipal - PPM) | **Atualização:** Anual")
+    st.markdown("---")
+
+    if df_ibge.empty:
+        st.warning("Dados do IBGE ainda não disponíveis. Aguarde o término da importação.")
+    else:
+        # Mapa de UF ID para Sigla
+        UF_MAP = {
+            11: 'RO', 12: 'AC', 13: 'AM', 14: 'RR', 15: 'PA', 16: 'AP', 17: 'TO',
+            21: 'MA', 22: 'PI', 23: 'CE', 24: 'RN', 25: 'PB', 26: 'PE', 27: 'AL', 28: 'SE', 29: 'BA',
+            31: 'MG', 32: 'ES', 33: 'RJ', 35: 'SP',
+            41: 'PR', 42: 'SC', 43: 'RS',
+            50: 'MS', 51: 'MT', 52: 'GO', 53: 'DF'
+        }
+        
+        # Enriquecer dataset com Sigla UF se não existir
+        if 'UF_Sigla' not in df_ibge.columns:
+            df_ibge['UF_Sigla'] = df_ibge['UF_ID'].map(UF_MAP)
+
+        # Filtros Sidebar
+        st.sidebar.header("Filtros IBGE")
+        
+        # Ano
+        anos_ibge = sorted(df_ibge['Ano'].unique(), reverse=True)
+        sel_ano_ibge = st.sidebar.selectbox("Ano", anos_ibge)
+        
+        # Filtrar por ano primeiro
+        df_ibge_ano = df_ibge[df_ibge['Ano'] == sel_ano_ibge].copy()
+        
+        # Estado
+        ufs_disp = sorted(df_ibge_ano['UF_Sigla'].dropna().unique())
+        sel_uf_ibge = st.sidebar.multiselect("Estado (UF)", ufs_disp)
+        
+        if sel_uf_ibge:
+            df_ibge_ano = df_ibge_ano[df_ibge_ano['UF_Sigla'].isin(sel_uf_ibge)]
+            
+        # Município (dependente do estado)
+        muns_disp = sorted(df_ibge_ano['Municipio'].unique())
+        sel_mun_ibge = st.sidebar.multiselect("Município", muns_disp)
+        
+        if sel_mun_ibge:
+            df_ibge_ano = df_ibge_ano[df_ibge_ano['Municipio'].isin(sel_mun_ibge)]
+            
+        # --- KPIs ---
+        total_prod = df_ibge_ano['Producao_Kg'].sum()
+        total_valor = df_ibge_ano['Valor_Prod_MilReais'].sum() * 1000 # Converter para Reais
+        
+        if total_prod > 0:
+            preco_medio = total_valor / total_prod
+        else:
+            preco_medio = 0
+            
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Produção Total", f"{total_prod:,.0f}".replace(",", ".") + " kg")
+        col2.metric("Valor Total da Produção", f"R$ {total_valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        col3.metric("Preço Médio Implícito", f"R$ {preco_medio:,.2f} / kg")
+        
+        st.markdown("---")
+        
+        # --- TURBO: Gráficos ---
+        
+        c_chart1, c_chart2 = st.columns(2)
+        
+        with c_chart1:
+            st.subheader("🏆 Principais Estados Produtores")
+            # Agrupar por UF
+            by_uf = df_ibge_ano.groupby('UF_Sigla')[['Producao_Kg', 'Valor_Prod_MilReais']].sum().reset_index()
+            by_uf = by_uf.sort_values('Producao_Kg', ascending=False).head(10)
+            
+            # Cor para destacar top 1
+            by_uf['Color'] = ['#009c3b'] + ['#1f77b4']*(len(by_uf)-1)
+
+            fig_uf = px.bar(
+                by_uf,
+                x='Producao_Kg',
+                y='UF_Sigla',
+                orientation='h',
+                text=by_uf['Producao_Kg'].apply(lambda x: f"{x/1e3:.1f}k"),
+                title=f"Top 10 Estados em {sel_ano_ibge}",
+                labels={'Producao_Kg': 'Produção (kg)', 'UF_Sigla': 'UF'},
+                color='Color',
+                color_discrete_map='identity'
+            )
+            fig_uf.update_layout(yaxis={'categoryorder': 'total ascending'}, separators=",.")
+            st.plotly_chart(fig_uf, use_container_width=True)
+            
+        with c_chart2:
+            st.subheader("🏙️ Principais Municípios")
+            by_mun = df_ibge_ano.groupby(['Municipio', 'UF_Sigla'])['Producao_Kg'].sum().reset_index()
+            by_mun['Local'] = by_mun['Municipio'] + " - " + by_mun['UF_Sigla']
+            by_mun = by_mun.sort_values('Producao_Kg', ascending=False).head(10)
+            
+            fig_mun = px.bar(
+                by_mun,
+                x='Producao_Kg',
+                y='Local',
+                orientation='h',
+                title=f"Top 10 Municípios em {sel_ano_ibge}",
+                labels={'Producao_Kg': 'Produção (kg)', 'Local': ''}
+            )
+            fig_mun.update_layout(yaxis={'categoryorder': 'total ascending'}, separators=",.")
+            st.plotly_chart(fig_mun, use_container_width=True)
+            
+        st.markdown("---")
+        st.subheader("📈 Evolução da Produção Nacional")
+        
+        # Agrupar todo o historico por ano
+        hist = df_ibge.groupby('Ano')['Producao_Kg'].sum().reset_index().sort_values('Ano')
+        
+        fig_hist = px.line(
+            hist,
+            x='Ano',
+            y='Producao_Kg',
+            markers=True,
+            title="Série Histórica: Produção de Mel no Brasil",
+            labels={'Producao_Kg': 'Produção (kg)'}
+        )
+        fig_hist.update_layout(separators=",.")
+        st.plotly_chart(fig_hist, use_container_width=True)
+        
+        with st.expander("Ver Dados Brutos"):
+            st.dataframe(df_ibge_ano.sort_values('Producao_Kg', ascending=False).style.format({
+                'Producao_Kg': '{:,.0f}',
+                'Valor_Prod_MilReais': '{:,.2f}'
+            }), use_container_width=True)
+
 st.sidebar.caption("Desenvolvido por AntiGravity")
