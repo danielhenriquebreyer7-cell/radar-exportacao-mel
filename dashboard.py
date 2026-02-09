@@ -4,11 +4,21 @@ import sqlite3
 import plotly.express as px
 import io
 
+import os
+import datetime
+
+def get_db_updated_time():
+    try:
+        timestamp = os.path.getmtime("mel_export.db")
+        return datetime.datetime.fromtimestamp(timestamp).strftime("%d/%m/%Y")
+    except:
+        return datetime.datetime.now().strftime("%d/%m/%Y")
+
 # Configuração da página para um visual premium
 st.set_page_config(page_title="Radar de Exportação: Mel Natural", layout="wide")
 
 # ⚡ MENSAGEM DE CONFIRMAÇÃO - PODE REMOVER DEPOIS ⚡
-st.success("🎉 OLHA EU AQUI! Dashboard atualizado em 08/02/2026 às 08:55 - Dados FAO integrados!")
+
 
 # Estilo CSS customizado
 st.markdown("""
@@ -316,6 +326,10 @@ if view_mode == "Visão Brasil (Exportação)" or view_mode == "Visão Brasil (L
     else:
         st.info("Nenhum dado para exibir na tabela.")
     
+    
+    st.markdown("---")
+    st.markdown(f"<div style='text-align: right; color: #666; font-size: 0.8em;'>Atualizado da fonte: MDIC / Comex Stat em {get_db_updated_time()}</div>", unsafe_allow_html=True)
+
 elif view_mode == "Visão Global (Mundo)":
     # --- VISÃO GLOBAL (COMTRADE) ---
     st.sidebar.header("Filtros Global")
@@ -558,6 +572,10 @@ elif view_mode == "Visão Global (Mundo)":
         
     else:
         st.warning("Dados globais (Comtrade) ainda não disponíveis. Execute a importação primeiro.")
+
+    
+    st.markdown("---")
+    st.markdown(f"<div style='text-align: right; color: #666; font-size: 0.8em;'>Atualizado da fonte: UN Comtrade em {get_db_updated_time()}</div>", unsafe_allow_html=True)
 
 elif view_mode == "Inteligência de Produção (FAO)":
     st.title("🌍 Produção Global de Mel (FAOSTAT)")
@@ -867,10 +885,15 @@ elif view_mode == "Inteligência de Produção (FAO)":
             if 'Preco_USD_Kg' in colunas_show:
                 format_dict['Preco_USD_Kg'] = 'US$ {:,.2f}'
             
+
             st.dataframe(
                 df_tabela[colunas_show].style.format(format_dict, na_rep='-'),
                 use_container_width=True
             )
+            
+    st.markdown("---")
+    st.markdown(f"<div style='text-align: right; color: #666; font-size: 0.8em;'>Atualizado da fonte: FAOSTAT em {get_db_updated_time()}</div>", unsafe_allow_html=True)
+
 
 st.sidebar.markdown("---")
 
@@ -1002,5 +1025,9 @@ if view_mode == "Produção Interna (IBGE)":
                 'Producao_Kg': '{:,.0f}',
                 'Valor_Prod_MilReais': '{:,.2f}'
             }), use_container_width=True)
+            
+    st.markdown("---")
+    st.markdown(f"<div style='text-align: right; color: #666; font-size: 0.8em;'>Atualizado da fonte: IBGE / PPM em {get_db_updated_time()}</div>", unsafe_allow_html=True)
+
 
 st.sidebar.caption("Desenvolvido por AntiGravity")
