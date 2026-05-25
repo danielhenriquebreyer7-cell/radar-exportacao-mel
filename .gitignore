@@ -1,6 +1,8 @@
 # Dados volumosos
 data/
-metadata/
+metadata/*
+!metadata/MUNICIPIO_IBGE.csv
+
 
 # Ambientes virtuais e cache
 venv/
